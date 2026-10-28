@@ -3,6 +3,12 @@ package fulfilmentservice
 import cats.effect.IO
 import munit.CatsEffectSuite
 import pureconfig.ConfigSource
+import purekafka.consumer.StreamSupervisorConfig
+import purekafka.resilience.{
+  CircuitBreakerConfig => KafkaCircuitBreakerConfig,
+  ResilienceConfig => KafkaResilienceConfig,
+  RetryConfig => KafkaRetryConfig
+}
 import purerest.resilience.{CircuitBreakerConfig, ResilienceConfig, RetryConfig}
 
 import scala.concurrent.duration._
@@ -29,7 +35,15 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       |  }
       |}
       |simulation { enabled = false }
-      |kafka { bootstrap-servers = "localhost:9092" }
+      |kafka {
+      |  bootstrap-servers = "localhost:9092"
+      |  dlq-retry { max-retries = 3, base-delay = 200ms }
+      |  dlq-publish-resilience {
+      |    retry { max-retries = 3, base-delay = 100ms }
+      |    circuit-breaker { failure-threshold = 5, reset-timeout = 30s }
+      |  }
+      |  stream-supervisor { base-delay = 1s, max-delay = 30s }
+      |}
       |""".stripMargin
 
   test("loads a fully-specified config") {
@@ -60,7 +74,15 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
             )
           ),
           simulation = SimulationConfig(enabled = false),
-          kafka = KafkaConfig(bootstrapServers = "localhost:9092")
+          kafka = KafkaConfig(
+            bootstrapServers = "localhost:9092",
+            dlqRetry = KafkaRetryConfig(3, 200.millis),
+            dlqPublishResilience = KafkaResilienceConfig(
+              retry = KafkaRetryConfig(3, 100.millis),
+              circuitBreaker = KafkaCircuitBreakerConfig(5, 30.seconds)
+            ),
+            streamSupervisor = StreamSupervisorConfig(1.second, 30.seconds)
+          )
         )
       )
     )
@@ -104,7 +126,7 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       )
       assertEquals(config.orderClient.baseUrl, "http://localhost:8083")
       assertEquals(config.simulation, SimulationConfig(enabled = false))
-      assertEquals(config.kafka, KafkaConfig("localhost:9092"))
+      assertEquals(config.kafka.bootstrapServers, "localhost:9092")
     }
   }
 }

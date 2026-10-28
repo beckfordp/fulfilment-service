@@ -2,6 +2,7 @@ package fulfilmentservice
 
 import cats.effect.{IO, IOApp, Resource}
 import com.comcast.ip4s._
+import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
 
 import fulfilmentservice.examples.ExampleAsyncApiChannels
@@ -39,6 +40,19 @@ object Main extends IOApp.Simple {
       )("fulfilment-service starting")
     )
     store <- FulfilmentStore.postgres[IO](config.postgres, telemetry.meter)
+    httpClient <- EmberClientBuilder.default[IO].build
+    orders = OrderClient.resilient[IO](
+      httpClient,
+      config.orderClient,
+      telemetry
+    )
+    _ <- KafkaConsumers.resource[IO](
+      config.kafka,
+      store,
+      orders,
+      telemetry.logger,
+      telemetry.meter
+    )
     routes = AppRoutes.all[IO](
       store,
       telemetry,

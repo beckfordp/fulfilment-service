@@ -71,8 +71,9 @@ object ErrorResponse {
   implicit val codec: Codec[ErrorResponse] = deriveCodec
 }
 
-/** Internal operator API for the gshop admin fulfilment screen (US-17/18),
-  * plus a config-gated `simulate-next` for deterministic demos. */
+/** Internal operator API for the gshop admin fulfilment screen (US-17/18), plus
+  * a config-gated `simulate-next` for deterministic demos.
+  */
 object FulfilmentRoutes {
 
   private val notFoundVariant
@@ -112,42 +113,53 @@ object FulfilmentRoutes {
       invalidRequestVariant
     )
 
-  private val listEndpoint: PublicEndpoint[Option[String], FulfilmentFailure,
-    List[TaskResponse], Any] =
+  private val listEndpoint: PublicEndpoint[Option[
+    String
+  ], FulfilmentFailure, List[TaskResponse], Any] =
     endpoint.get
       .in("fulfilment-tasks")
       .in(query[Option[String]]("state"))
       .out(jsonBody[List[TaskResponse]])
       .errorOut(errorOutput)
 
-  private def actionEndpoint(action: String)
-      : PublicEndpoint[String, FulfilmentFailure, TaskResponse, Any] =
+  private def actionEndpoint(
+      action: String
+  ): PublicEndpoint[String, FulfilmentFailure, TaskResponse, Any] =
     endpoint.post
       .in("fulfilment-tasks" / path[String]("orderId") / action)
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
-  private val dispatchEndpoint
-      : PublicEndpoint[(String, DispatchRequest), FulfilmentFailure,
-        TaskResponse, Any] =
+  private val dispatchEndpoint: PublicEndpoint[
+    (String, DispatchRequest),
+    FulfilmentFailure,
+    TaskResponse,
+    Any
+  ] =
     endpoint.post
       .in("fulfilment-tasks" / path[String]("orderId") / "dispatch")
       .in(jsonBody[DispatchRequest])
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
-  private val failEndpoint
-      : PublicEndpoint[(String, FailRequest), FulfilmentFailure,
-        TaskResponse, Any] =
+  private val failEndpoint: PublicEndpoint[
+    (String, FailRequest),
+    FulfilmentFailure,
+    TaskResponse,
+    Any
+  ] =
     endpoint.post
       .in("fulfilment-tasks" / path[String]("orderId") / "fail")
       .in(jsonBody[FailRequest])
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
-  private val simulateEndpoint
-      : PublicEndpoint[(String, SimulateRequest), FulfilmentFailure,
-        TaskResponse, Any] =
+  private val simulateEndpoint: PublicEndpoint[
+    (String, SimulateRequest),
+    FulfilmentFailure,
+    TaskResponse,
+    Any
+  ] =
     endpoint.post
       .in("fulfilment-tasks" / path[String]("orderId") / "simulate-next")
       .in(jsonBody[SimulateRequest])
@@ -167,8 +179,9 @@ object FulfilmentRoutes {
 
     def respond(
         context: Map[String, String]
-    )(result: Either[FulfilmentFailure, FulfilmentTask])
-        : F[Either[FulfilmentFailure, TaskResponse]] =
+    )(
+        result: Either[FulfilmentFailure, FulfilmentTask]
+    ): F[Either[FulfilmentFailure, TaskResponse]] =
       result match {
         case Right(task) =>
           log(context + ("state" -> task.state.wire))("Fulfilment task updated")
@@ -180,7 +193,7 @@ object FulfilmentRoutes {
 
     val list = listEndpoint.serverLogic[F] { stateFilter =>
       val parsed = stateFilter match {
-        case None => Right(None)
+        case None        => Right(None)
         case Some(value) =>
           FulfilmentState
             .fromString(value)
@@ -188,14 +201,15 @@ object FulfilmentRoutes {
             .map(Some(_))
       }
       parsed match {
-        case Left(error) => Async[F].pure(Left(error))
+        case Left(error)  => Async[F].pure(Left(error))
         case Right(state) =>
           store.list(state).map(tasks => Right(tasks.map(TaskResponse(_))))
       }
     }
 
-    val startPicking = actionEndpoint("start-picking").serverLogic[F] { orderId =>
-      store.startPicking(orderId).flatMap(respond(Map("order_id" -> orderId)))
+    val startPicking = actionEndpoint("start-picking").serverLogic[F] {
+      orderId =>
+        store.startPicking(orderId).flatMap(respond(Map("order_id" -> orderId)))
     }
 
     val pack = actionEndpoint("pack").serverLogic[F] { orderId =>
@@ -216,13 +230,13 @@ object FulfilmentRoutes {
 
     val simulate = simulateEndpoint.serverLogic[F] { case (orderId, request) =>
       store.get(orderId).flatMap {
-        case None => Async[F].pure(Left(FulfilmentFailure.NotFound))
+        case None       => Async[F].pure(Left(FulfilmentFailure.NotFound))
         case Some(task) =>
           val outcome: F[Either[FulfilmentFailure, FulfilmentTask]] =
             task.state match {
               case FulfilmentState.Pending => store.startPicking(orderId)
               case FulfilmentState.Picking => store.pack(orderId)
-              case FulfilmentState.Packed =>
+              case FulfilmentState.Packed  =>
                 if (request.forceFailure.getOrElse(false))
                   store.fail(
                     orderId,

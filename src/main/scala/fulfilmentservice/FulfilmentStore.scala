@@ -78,27 +78,29 @@ object FulfilmentStore {
           update: FulfilmentTask => Either[FulfilmentFailure, FulfilmentTask],
           event: FulfilmentTask => F[Option[EventEnvelope]]
       ): F[Either[FulfilmentFailure, FulfilmentTask]] =
-        tasks.modify { current =>
-          current.get(orderId) match {
-            case None => (current, Left(FulfilmentFailure.NotFound))
-            case Some(existing) =>
-              update(existing) match {
-                case Left(error) => (current, Left(error))
-                case Right(updated) =>
-                  (current + (orderId -> updated), Right(updated))
-              }
-          }
-        }.flatMap {
-          case Right(updated) =>
-            event(updated).flatMap {
-              case Some(envelope) =>
-                outbox
-                  .update(_ :+ (orderId -> envelope))
-                  .as(Right(updated))
-              case None => Sync[F].pure(Right(updated))
+        tasks
+          .modify { current =>
+            current.get(orderId) match {
+              case None           => (current, Left(FulfilmentFailure.NotFound))
+              case Some(existing) =>
+                update(existing) match {
+                  case Left(error)    => (current, Left(error))
+                  case Right(updated) =>
+                    (current + (orderId -> updated), Right(updated))
+                }
             }
-          case Left(error) => Sync[F].pure(Left(error))
-        }
+          }
+          .flatMap {
+            case Right(updated) =>
+              event(updated).flatMap {
+                case Some(envelope) =>
+                  outbox
+                    .update(_ :+ (orderId -> envelope))
+                    .as(Right(updated))
+                case None => Sync[F].pure(Right(updated))
+              }
+            case Left(error) => Sync[F].pure(Left(error))
+          }
 
       val store = new FulfilmentStore[F] {
         def ping: F[Boolean] = Sync[F].pure(true)
@@ -111,7 +113,7 @@ object FulfilmentStore {
           tasks.modify { current =>
             current.get(orderId) match {
               case Some(existing) => (current, existing)
-              case None =>
+              case None           =>
                 val now = java.time.Instant.now()
                 val task = FulfilmentTask(
                   orderId,
@@ -284,10 +286,13 @@ object FulfilmentStore {
         timestamptz *: timestamptz
     )
 
-  private val insertTask: skunk.Query[(UUID, List[FulfilmentItem], Address), TaskRow] =
+  private val insertTask
+      : skunk.Query[(UUID, List[FulfilmentItem], Address), TaskRow] =
     sql"""
       INSERT INTO "fulfilment_task" (order_id, state, items, shipping_address)
-      VALUES ($uuid, 'PENDING', ${jsonb[List[FulfilmentItem]]}, ${jsonb[Address]})
+      VALUES ($uuid, 'PENDING', ${jsonb[List[FulfilmentItem]]}, ${jsonb[
+        Address
+      ]})
       ON CONFLICT (order_id) DO NOTHING
       RETURNING order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at
     """.query(
@@ -319,7 +324,8 @@ object FulfilmentStore {
       VALUES ($uuid, $text, ${jsonb[EventEnvelope]}, $text)
     """.command
 
-  private val pingQuery: skunk.Query[skunk.Void, Int] = sql"SELECT 1".query(int4)
+  private val pingQuery: skunk.Query[skunk.Void, Int] =
+    sql"SELECT 1".query(int4)
 
   private def toTask(row: TaskRow): FulfilmentTask = {
     val (
@@ -371,7 +377,7 @@ object FulfilmentStore {
                 result <- fa.attempt
                 end <- Async[F].monotonic
                 outcomeAttributes = result match {
-                  case Right(_) => Nil
+                  case Right(_)    => Nil
                   case Left(error) =>
                     List(Attribute("error.type", error.getClass.getName))
                 }
@@ -387,8 +393,7 @@ object FulfilmentStore {
 
             new FulfilmentStore[F] {
               def ping: F[Boolean] =
-                timed("ping")(pool.use(_.unique(pingQuery)))
-                  .attempt
+                timed("ping")(pool.use(_.unique(pingQuery))).attempt
                   .map(_.isRight)
 
               def createTask(
@@ -405,7 +410,7 @@ object FulfilmentStore {
                         .flatMap(_.option((id, items, shippingAddress)))
                       task <- inserted match {
                         case Some(row) => Sync[F].pure(toTask(row))
-                        case None =>
+                        case None      =>
                           session
                             .prepare(selectTask)
                             .flatMap(_.unique(id))
@@ -417,7 +422,7 @@ object FulfilmentStore {
 
               def get(orderId: String): F[Option[FulfilmentTask]] =
                 scala.util.Try(UUID.fromString(orderId)).toOption match {
-                  case None => Sync[F].pure(None)
+                  case None     => Sync[F].pure(None)
                   case Some(id) =>
                     timed("select") {
                       pool.use { session =>
@@ -435,11 +440,16 @@ object FulfilmentStore {
                       .prepare(selectAllTasks)
                       .flatMap(_.stream(skunk.Void, 64).compile.toList)
                   }
-                }.map(_.map(toTask).filter(task => state.forall(_ == task.state)))
+                }.map(
+                  _.map(toTask).filter(task => state.forall(_ == task.state))
+                )
 
               private def transition(
                   orderId: String,
-                  update: FulfilmentTask => Either[FulfilmentFailure, FulfilmentTask],
+                  update: FulfilmentTask => Either[
+                    FulfilmentFailure,
+                    FulfilmentTask
+                  ],
                   event: FulfilmentTask => F[Option[EventEnvelope]]
               ): F[Either[FulfilmentFailure, FulfilmentTask]] =
                 scala.util.Try(UUID.fromString(orderId)).toOption match {
@@ -478,7 +488,7 @@ object FulfilmentStore {
                                         )
                                         .map(toTask)
                                       _ <- event(updated).flatMap {
-                                        case None => Sync[F].unit
+                                        case None           => Sync[F].unit
                                         case Some(envelope) =>
                                           Sync[F]
                                             .delay(UUID.randomUUID())

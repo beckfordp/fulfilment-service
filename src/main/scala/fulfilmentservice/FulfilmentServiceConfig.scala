@@ -4,6 +4,12 @@ import cats.effect.Sync
 import cats.syntax.all._
 import com.comcast.ip4s.Port
 import pureconfig.{ConfigReader, ConfigSource}
+import purekafka.consumer.StreamSupervisorConfig
+import purekafka.resilience.{
+  CircuitBreakerConfig => KafkaCircuitBreakerConfig,
+  ResilienceConfig => KafkaResilienceConfig,
+  RetryConfig => KafkaRetryConfig
+}
 import purerest.resilience.ResilienceConfig
 
 final case class PostgresConfig(
@@ -21,7 +27,16 @@ final case class OrderClientConfig(
 
 final case class SimulationConfig(enabled: Boolean) derives ConfigReader
 
-final case class KafkaConfig(bootstrapServers: String) derives ConfigReader
+given ConfigReader[KafkaCircuitBreakerConfig] = ConfigReader.derived
+given ConfigReader[KafkaResilienceConfig] = ConfigReader.derived
+given ConfigReader[StreamSupervisorConfig] = ConfigReader.derived
+
+final case class KafkaConfig(
+    bootstrapServers: String,
+    dlqRetry: KafkaRetryConfig,
+    dlqPublishResilience: KafkaResilienceConfig,
+    streamSupervisor: StreamSupervisorConfig
+) derives ConfigReader
 
 final case class FulfilmentServiceConfig(
     port: Int,

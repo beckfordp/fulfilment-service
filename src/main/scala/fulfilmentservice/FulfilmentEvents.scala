@@ -46,7 +46,8 @@ object DispatchFailedEvent {
   implicit val schema: Schema[DispatchFailedEvent] = Schema.derived
 }
 
-/** The event a `PaymentAuthorized` consumer reads (payment-service producer). */
+/** The event a `PaymentAuthorized` consumer reads (payment-service producer).
+  */
 final case class PaymentAuthorizedEvent(
     orderId: String,
     authId: String,
