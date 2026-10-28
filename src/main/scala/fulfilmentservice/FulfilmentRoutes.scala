@@ -13,35 +13,56 @@ import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
-final case class CreateFulfilmentRequest( /* codegen:fields:CREATE_PARAMS */ )
+import java.util.UUID
 
-object CreateFulfilmentRequest {
-  implicit val codec: Codec[CreateFulfilmentRequest] = deriveCodec
-}
-
-final case class UpdateFulfilmentRequest( /* codegen:fields:UPDATE_PARAMS */ )
-
-object UpdateFulfilmentRequest {
-  implicit val codec: Codec[UpdateFulfilmentRequest] = deriveCodec
-}
-
-final case class FulfilmentResponse(
-    id: String,
-    // codegen:fields:CASE_CLASS_FIELD
+final case class TaskResponse(
+    orderId: String,
+    state: String,
+    items: List[FulfilmentItem],
+    shippingAddress: Address,
+    trackingNo: Option[String],
+    carrier: Option[String],
+    failureReason: Option[String],
     createdAt: java.time.Instant,
     updatedAt: java.time.Instant
 )
 
-object FulfilmentResponse {
-  implicit val codec: Codec[FulfilmentResponse] = deriveCodec
+object TaskResponse {
+  implicit val codec: Codec[TaskResponse] = deriveCodec
 
-  def apply(entity: Fulfilment): FulfilmentResponse =
-    FulfilmentResponse(
-      entity.id,
-      /* codegen:fields:RESPONSE_APPLY_ARGS */
-      entity.createdAt,
-      entity.updatedAt
+  def apply(task: FulfilmentTask): TaskResponse =
+    TaskResponse(
+      task.orderId,
+      task.state.wire,
+      task.items,
+      task.shippingAddress,
+      task.trackingNo,
+      task.carrier,
+      task.failureReason,
+      task.createdAt,
+      task.updatedAt
     )
+}
+
+final case class DispatchRequest(trackingNo: String, carrier: String)
+
+object DispatchRequest {
+  implicit val codec: Codec[DispatchRequest] = deriveCodec
+}
+
+final case class FailRequest(reason: String)
+
+object FailRequest {
+  implicit val codec: Codec[FailRequest] = deriveCodec
+}
+
+final case class SimulateRequest(
+    forceFailure: Option[Boolean] = None,
+    reason: Option[String] = None
+)
+
+object SimulateRequest {
+  implicit val codec: Codec[SimulateRequest] = deriveCodec
 }
 
 final case class ErrorResponse(error: String)
@@ -50,274 +71,192 @@ object ErrorResponse {
   implicit val codec: Codec[ErrorResponse] = deriveCodec
 }
 
+/** Internal operator API for the gshop admin fulfilment screen (US-17/18),
+  * plus a config-gated `simulate-next` for deterministic demos. */
 object FulfilmentRoutes {
 
-  private val createFulfilmentEndpoint: PublicEndpoint[
-    CreateFulfilmentRequest,
-    Unit,
-    FulfilmentResponse,
-    Any
-  ] =
+  private val notFoundVariant
+      : EndpointOutput.OneOfVariant[FulfilmentFailure.NotFound.type] =
+    oneOfVariant(
+      statusCode(StatusCode.NotFound)
+        .and(jsonBody[ErrorResponse])
+        .map[FulfilmentFailure.NotFound.type](_ => FulfilmentFailure.NotFound)(
+          _ => ErrorResponse("Fulfilment task not found")
+        )
+    )
+
+  private val invalidTransitionVariant
+      : EndpointOutput.OneOfVariant[FulfilmentFailure.InvalidTransition] =
+    oneOfVariant(
+      statusCode(StatusCode.Conflict)
+        .and(jsonBody[ErrorResponse])
+        .map[FulfilmentFailure.InvalidTransition](e =>
+          FulfilmentFailure.InvalidTransition(e.error)
+        )(e => ErrorResponse(e.message))
+    )
+
+  private val invalidRequestVariant
+      : EndpointOutput.OneOfVariant[FulfilmentFailure.InvalidRequest] =
+    oneOfVariant(
+      statusCode(StatusCode.BadRequest)
+        .and(jsonBody[ErrorResponse])
+        .map[FulfilmentFailure.InvalidRequest](e =>
+          FulfilmentFailure.InvalidRequest(e.error)
+        )(e => ErrorResponse(e.message))
+    )
+
+  private val errorOutput: EndpointOutput[FulfilmentFailure] =
+    oneOf[FulfilmentFailure](
+      notFoundVariant,
+      invalidTransitionVariant,
+      invalidRequestVariant
+    )
+
+  private val listEndpoint: PublicEndpoint[Option[String], FulfilmentFailure,
+    List[TaskResponse], Any] =
+    endpoint.get
+      .in("fulfilment-tasks")
+      .in(query[Option[String]]("state"))
+      .out(jsonBody[List[TaskResponse]])
+      .errorOut(errorOutput)
+
+  private def actionEndpoint(action: String)
+      : PublicEndpoint[String, FulfilmentFailure, TaskResponse, Any] =
     endpoint.post
-      .in("fulfilments")
-      .in(jsonBody[CreateFulfilmentRequest])
-      .out(statusCode(StatusCode.Created))
-      .out(jsonBody[FulfilmentResponse])
+      .in("fulfilment-tasks" / path[String]("orderId") / action)
+      .out(jsonBody[TaskResponse])
+      .errorOut(errorOutput)
 
-  private val notFoundOutput: EndpointOutput[FulfilmentError] =
-    statusCode(StatusCode.NotFound)
-      .and(jsonBody[ErrorResponse])
-      .map[FulfilmentError](_ => FulfilmentNotFound)(_ =>
-        ErrorResponse("Fulfilment not found")
-      )
+  private val dispatchEndpoint
+      : PublicEndpoint[(String, DispatchRequest), FulfilmentFailure,
+        TaskResponse, Any] =
+    endpoint.post
+      .in("fulfilment-tasks" / path[String]("orderId") / "dispatch")
+      .in(jsonBody[DispatchRequest])
+      .out(jsonBody[TaskResponse])
+      .errorOut(errorOutput)
 
-  private val invalidPaginationOutput: EndpointOutput[FulfilmentError] =
-    statusCode(StatusCode.BadRequest)
-      .and(jsonBody[ErrorResponse])
-      .map[FulfilmentError](_ => InvalidPagination)(_ =>
-        ErrorResponse("Invalid pagination parameters")
-      )
+  private val failEndpoint
+      : PublicEndpoint[(String, FailRequest), FulfilmentFailure,
+        TaskResponse, Any] =
+    endpoint.post
+      .in("fulfilment-tasks" / path[String]("orderId") / "fail")
+      .in(jsonBody[FailRequest])
+      .out(jsonBody[TaskResponse])
+      .errorOut(errorOutput)
 
-  private val listFulfilmentsEndpoint: PublicEndpoint[
-    (Option[Int], Option[Int]),
-    FulfilmentError,
-    (List[FulfilmentResponse], String),
-    Any
-  ] =
-    endpoint.get
-      .in("fulfilments")
-      .in(query[Option[Int]]("limit"))
-      .in(query[Option[Int]]("offset"))
-      .out(jsonBody[List[FulfilmentResponse]])
-      .out(header[String]("X-Total-Count"))
-      .errorOut(invalidPaginationOutput)
+  private val simulateEndpoint
+      : PublicEndpoint[(String, SimulateRequest), FulfilmentFailure,
+        TaskResponse, Any] =
+    endpoint.post
+      .in("fulfilment-tasks" / path[String]("orderId") / "simulate-next")
+      .in(jsonBody[SimulateRequest])
+      .out(jsonBody[TaskResponse])
+      .errorOut(errorOutput)
 
-  private val getFulfilmentEndpoint: PublicEndpoint[
-    String,
-    FulfilmentError,
-    FulfilmentResponse,
-    Any
-  ] =
-    endpoint.get
-      .in("fulfilments" / path[String]("id"))
-      .out(jsonBody[FulfilmentResponse])
-      .errorOut(notFoundOutput)
+  private def generatedTrackingNo(): String =
+    s"GLN-${UUID.randomUUID().toString.take(8).toUpperCase}"
 
-  private val updateFulfilmentEndpoint: PublicEndpoint[
-    (String, UpdateFulfilmentRequest),
-    FulfilmentError,
-    FulfilmentResponse,
-    Any
-  ] =
-    endpoint.patch
-      .in("fulfilments" / path[String]("id"))
-      .in(jsonBody[UpdateFulfilmentRequest])
-      .out(jsonBody[FulfilmentResponse])
-      .errorOut(notFoundOutput)
-
-  private val replaceFulfilmentEndpoint: PublicEndpoint[
-    (String, UpdateFulfilmentRequest),
-    FulfilmentError,
-    FulfilmentResponse,
-    Any
-  ] =
-    endpoint.put
-      .in("fulfilments" / path[String]("id"))
-      .in(jsonBody[UpdateFulfilmentRequest])
-      .out(jsonBody[FulfilmentResponse])
-      .errorOut(notFoundOutput)
-
-  private val deleteFulfilmentEndpoint
-      : PublicEndpoint[String, FulfilmentError, Unit, Any] =
-    endpoint.delete
-      .in("fulfilments" / path[String]("id"))
-      .out(statusCode(StatusCode.NoContent))
-      .errorOut(notFoundOutput)
-
-  def serverEndpoint[F[_]: Async](
+  def serverEndpoints[F[_]: Async](
       store: FulfilmentStore[F],
+      simulationEnabled: Boolean,
       logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    createFulfilmentEndpoint.serverLogicSuccess[F] { req =>
-      for {
-        _ <- logger.info(
-          Map(
-            "method" -> "POST",
-            "path" -> "/fulfilments"
-          )
-        )("Received request")
-        entity <- store
-          .create( /* codegen:fields:CREATE_CALL_ARGS */ )
-          .onError { case error =>
-            logger.error(Map.empty, error)("Persisting the fulfilment failed")
-          }
-        _ <- logger.info(
-          Map("fulfilment_id" -> entity.id)
-        )("Request completed")
-      } yield FulfilmentResponse(entity)
+  ): List[ServerEndpoint[Any, F]] = {
+    def log(context: Map[String, String])(message: String): F[Unit] =
+      logger.info(context)(message)
+
+    def respond(
+        context: Map[String, String]
+    )(result: Either[FulfilmentFailure, FulfilmentTask])
+        : F[Either[FulfilmentFailure, TaskResponse]] =
+      result match {
+        case Right(task) =>
+          log(context + ("state" -> task.state.wire))("Fulfilment task updated")
+            .as(Right(TaskResponse(task)))
+        case Left(error) =>
+          log(context + ("error" -> error.toString))("Fulfilment task rejected")
+            .as(Left(error))
+      }
+
+    val list = listEndpoint.serverLogic[F] { stateFilter =>
+      val parsed = stateFilter match {
+        case None => Right(None)
+        case Some(value) =>
+          FulfilmentState
+            .fromString(value)
+            .toRight(FulfilmentFailure.InvalidRequest(s"Unknown state: $value"))
+            .map(Some(_))
+      }
+      parsed match {
+        case Left(error) => Async[F].pure(Left(error))
+        case Right(state) =>
+          store.list(state).map(tasks => Right(tasks.map(TaskResponse(_))))
+      }
     }
 
-  def getFulfilmentServerEndpoint[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    getFulfilmentEndpoint.serverLogic[F] { id =>
-      for {
-        _ <- logger.info(
-          Map(
-            "method" -> "GET",
-            "path" -> s"/fulfilments/$id",
-            "fulfilment_id" -> id
-          )
-        )(
-          "Received request"
-        )
-        result <- store.get(id).flatMap {
-          case Some(entity) =>
-            logger
-              .info(Map("fulfilment_id" -> id))("Request completed")
-              .as(Right(FulfilmentResponse(entity)))
-          case None =>
-            logger
-              .warn(Map("fulfilment_id" -> id))("Fulfilment not found")
-              .as(Left(FulfilmentNotFound))
-        }
-      } yield result
+    val startPicking = actionEndpoint("start-picking").serverLogic[F] { orderId =>
+      store.startPicking(orderId).flatMap(respond(Map("order_id" -> orderId)))
     }
 
-  /** Shared handler for `PATCH` (partial update) and `PUT` (full replace) —
-    * both call `FulfilmentStore.update` with the same required update body;
-    * only the logged HTTP method differs.
-    */
-  private def updateLogic[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F],
-      httpMethod: String
-  )(
-      id: String,
-      req: UpdateFulfilmentRequest
-  ): F[Either[FulfilmentError, FulfilmentResponse]] =
-    for {
-      _ <- logger.info(
-        Map(
-          "method" -> httpMethod,
-          "path" -> s"/fulfilments/$id",
-          "fulfilment_id" -> id
-        )
-      )("Received request")
-      result <- store
-        .update(id /* codegen:fields:UPDATE_CALL_ARGS */ )
-        .flatMap {
-          case Some(entity) =>
-            logger
-              .info(Map("fulfilment_id" -> id))("Request completed")
-              .as(Right(FulfilmentResponse(entity)))
-          case None =>
-            logger
-              .warn(Map("fulfilment_id" -> id))("Fulfilment not found")
-              .as(Left(FulfilmentNotFound))
-        }
-    } yield result
-
-  def updateFulfilmentServerEndpoint[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    updateFulfilmentEndpoint.serverLogic[F] { case (id, req) =>
-      updateLogic(store, logger, "PATCH")(id, req)
+    val pack = actionEndpoint("pack").serverLogic[F] { orderId =>
+      store.pack(orderId).flatMap(respond(Map("order_id" -> orderId)))
     }
 
-  def replaceFulfilmentServerEndpoint[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    replaceFulfilmentEndpoint.serverLogic[F] { case (id, req) =>
-      updateLogic(store, logger, "PUT")(id, req)
+    val dispatch = dispatchEndpoint.serverLogic[F] { case (orderId, request) =>
+      store
+        .dispatch(orderId, request.trackingNo, request.carrier)
+        .flatMap(respond(Map("order_id" -> orderId)))
     }
 
-  def deleteFulfilmentServerEndpoint[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    deleteFulfilmentEndpoint.serverLogic[F] { id =>
-      for {
-        _ <- logger.info(
-          Map(
-            "method" -> "DELETE",
-            "path" -> s"/fulfilments/$id",
-            "fulfilment_id" -> id
-          )
-        )("Received request")
-        result <- store.delete(id).flatMap {
-          case true =>
-            logger
-              .info(Map("fulfilment_id" -> id))("Request completed")
-              .as(Right(()))
-          case false =>
-            logger
-              .warn(Map("fulfilment_id" -> id))("Fulfilment not found")
-              .as(Left(FulfilmentNotFound))
-        }
-      } yield result
+    val fail = failEndpoint.serverLogic[F] { case (orderId, request) =>
+      store
+        .fail(orderId, request.reason)
+        .flatMap(respond(Map("order_id" -> orderId)))
     }
 
-  private val defaultLimit = 20
-  private val maxLimit = 100
-
-  def listFulfilmentsServerEndpoint[F[_]: Async](
-      store: FulfilmentStore[F],
-      logger: StructuredLogger[F]
-  ): ServerEndpoint[Any, F] =
-    listFulfilmentsEndpoint.serverLogic[F] { case (limitParam, offsetParam) =>
-      val limit = limitParam.getOrElse(defaultLimit)
-      val offset = offsetParam.getOrElse(0)
-      for {
-        _ <- logger.info(
-          Map("method" -> "GET", "path" -> "/fulfilments")
-        )("Received request")
-        result <-
-          if (limit <= 0 || limit > maxLimit || offset < 0) {
-            logger
-              .warn(
-                Map("limit" -> limit.toString, "offset" -> offset.toString)
-              )("Invalid pagination parameters")
-              .as(Left(InvalidPagination))
-          } else {
-            store.list(limit, offset).flatMap { case (entities, total) =>
-              logger
-                .info(
-                  Map(
-                    "limit" -> limit.toString,
-                    "offset" -> offset.toString,
-                    "count" -> entities.size.toString,
-                    "total" -> total.toString
+    val simulate = simulateEndpoint.serverLogic[F] { case (orderId, request) =>
+      store.get(orderId).flatMap {
+        case None => Async[F].pure(Left(FulfilmentFailure.NotFound))
+        case Some(task) =>
+          val outcome: F[Either[FulfilmentFailure, FulfilmentTask]] =
+            task.state match {
+              case FulfilmentState.Pending => store.startPicking(orderId)
+              case FulfilmentState.Picking => store.pack(orderId)
+              case FulfilmentState.Packed =>
+                if (request.forceFailure.getOrElse(false))
+                  store.fail(
+                    orderId,
+                    request.reason.getOrElse("Simulated dispatch failure")
                   )
-                )("Request completed")
-                .as(
-                  Right(
-                    (
-                      entities.map(FulfilmentResponse.apply),
-                      total.toString
+                else
+                  store.dispatch(orderId, generatedTrackingNo(), "DHL Express")
+              case _ =>
+                Async[F].pure(
+                  Left(
+                    FulfilmentFailure.InvalidTransition(
+                      s"Order $orderId is already ${task.state.wire}"
                     )
                   )
                 )
             }
-          }
-      } yield result
+          outcome.flatMap(
+            respond(
+              Map("order_id" -> orderId, "simulated" -> "true")
+            )
+          )
+      }
     }
+
+    List(list, startPicking, pack, dispatch, fail) ++
+      (if (simulationEnabled) List(simulate) else Nil)
+  }
 
   def routes[F[_]: Async](
       store: FulfilmentStore[F],
+      simulationEnabled: Boolean,
       logger: StructuredLogger[F]
   ): HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
-      List(
-        serverEndpoint(store, logger),
-        getFulfilmentServerEndpoint(store, logger),
-        updateFulfilmentServerEndpoint(store, logger),
-        replaceFulfilmentServerEndpoint(store, logger),
-        deleteFulfilmentServerEndpoint(store, logger),
-        listFulfilmentsServerEndpoint(store, logger)
-      )
+      serverEndpoints(store, simulationEnabled, logger)
     )
 }

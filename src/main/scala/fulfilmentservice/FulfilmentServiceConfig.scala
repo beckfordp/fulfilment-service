@@ -4,6 +4,7 @@ import cats.effect.Sync
 import cats.syntax.all._
 import com.comcast.ip4s.Port
 import pureconfig.{ConfigReader, ConfigSource}
+import purerest.resilience.ResilienceConfig
 
 final case class PostgresConfig(
     host: String,
@@ -13,11 +14,23 @@ final case class PostgresConfig(
     password: String
 ) derives ConfigReader
 
+final case class OrderClientConfig(
+    baseUrl: String,
+    resilience: ResilienceConfig
+) derives ConfigReader
+
+final case class SimulationConfig(enabled: Boolean) derives ConfigReader
+
+final case class KafkaConfig(bootstrapServers: String) derives ConfigReader
+
 final case class FulfilmentServiceConfig(
     port: Int,
     metricsPort: Int,
     serviceName: String,
-    postgres: PostgresConfig
+    postgres: PostgresConfig,
+    orderClient: OrderClientConfig,
+    simulation: SimulationConfig,
+    kafka: KafkaConfig
 ) derives ConfigReader
 
 object FulfilmentServiceConfig {

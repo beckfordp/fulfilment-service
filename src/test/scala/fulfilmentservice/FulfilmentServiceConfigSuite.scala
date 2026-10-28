@@ -3,6 +3,9 @@ package fulfilmentservice
 import cats.effect.IO
 import munit.CatsEffectSuite
 import pureconfig.ConfigSource
+import purerest.resilience.{CircuitBreakerConfig, ResilienceConfig, RetryConfig}
+
+import scala.concurrent.duration._
 
 class FulfilmentServiceConfigSuite extends CatsEffectSuite {
 
@@ -18,6 +21,15 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       |  user = "fulfilment"
       |  password = "fulfilment"
       |}
+      |order-client {
+      |  base-url = "http://localhost:8083"
+      |  resilience {
+      |    retry { max-retries = 3, base-delay = 100ms }
+      |    circuit-breaker { failure-threshold = 5, reset-timeout = 30s }
+      |  }
+      |}
+      |simulation { enabled = false }
+      |kafka { bootstrap-servers = "localhost:9092" }
       |""".stripMargin
 
   test("loads a fully-specified config") {
@@ -36,7 +48,19 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
             database = "fulfilment",
             user = "fulfilment",
             password = "fulfilment"
-          )
+          ),
+          orderClient = OrderClientConfig(
+            baseUrl = "http://localhost:8083",
+            resilience = ResilienceConfig(
+              retry = RetryConfig(maxRetries = 3, baseDelay = 100.millis),
+              circuitBreaker = CircuitBreakerConfig(
+                failureThreshold = 5,
+                resetTimeout = 30.seconds
+              )
+            )
+          ),
+          simulation = SimulationConfig(enabled = false),
+          kafka = KafkaConfig(bootstrapServers = "localhost:9092")
         )
       )
     )
@@ -78,6 +102,9 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
           "fulfilment"
         )
       )
+      assertEquals(config.orderClient.baseUrl, "http://localhost:8083")
+      assertEquals(config.simulation, SimulationConfig(enabled = false))
+      assertEquals(config.kafka, KafkaConfig("localhost:9092"))
     }
   }
 }

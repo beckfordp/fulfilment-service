@@ -42,6 +42,7 @@ object Main extends IOApp.Simple {
     routes = AppRoutes.all[IO](
       store,
       telemetry,
+      config.simulation.enabled,
       ExampleAsyncApiChannels.channels
     )
     _ <- EmberServerBuilder

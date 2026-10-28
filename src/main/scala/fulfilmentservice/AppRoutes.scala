@@ -27,6 +27,7 @@ object AppRoutes {
   def all[F[_]: Async](
       store: FulfilmentStore[F],
       telemetry: Telemetry[F],
+      simulationEnabled: Boolean,
       channels: List[AsyncApiChannel[?]],
       staticAsyncApiDocsDir: String =
         sys.env.getOrElse("ASYNCAPI_HTML_DIR", "target/asyncapi-docs")
@@ -38,28 +39,11 @@ object AppRoutes {
     val docsRoutes = Docs.routes[F](
       "Fulfilment Service",
       "1.0",
-      List(
-        FulfilmentRoutes.serverEndpoint[F](store, telemetry.logger),
-        FulfilmentRoutes.getFulfilmentServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        FulfilmentRoutes.updateFulfilmentServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        FulfilmentRoutes.replaceFulfilmentServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        FulfilmentRoutes.deleteFulfilmentServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
-        FulfilmentRoutes.listFulfilmentsServerEndpoint[F](
-          store,
-          telemetry.logger
-        ),
+      FulfilmentRoutes.serverEndpoints[F](
+        store,
+        simulationEnabled,
+        telemetry.logger
+      ) ++ List(
         HealthRoutes.healthServerEndpoint[F],
         HealthRoutes.readyServerEndpoint[F](store)
       )

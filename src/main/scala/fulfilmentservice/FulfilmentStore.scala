@@ -4,159 +4,347 @@ import cats.effect.{Async, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
 import fs2.io.net.Network
+import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
 import skunk.Session
+import skunk.circe.codec.all.jsonb
 import skunk.codec.all._
 import skunk.implicits._
 
-import java.time.OffsetDateTime
+import java.time.{OffsetDateTime, ZoneOffset}
 import java.util.UUID
 import scala.concurrent.duration.SECONDS
 
-final case class Fulfilment(
-    id: String,
-    // codegen:fields:CASE_CLASS_FIELD
-    createdAt: java.time.Instant,
-    updatedAt: java.time.Instant
-)
-
 trait FulfilmentStore[F[_]] {
-  def create( /* codegen:fields:CREATE_PARAMS */ ): F[Fulfilment]
-  def get(id: String): F[Option[Fulfilment]]
-  def update(
-      id: String /* codegen:fields:UPDATE_PARAMS */
-  ): F[Option[Fulfilment]]
-  def delete(id: String): F[Boolean]
-  def list(limit: Int, offset: Int): F[(List[Fulfilment], Long)]
   def ping: F[Boolean]
+
+  /** Idempotent per orderId: a redelivered PaymentAuthorized returns the
+    * existing task unchanged.
+    */
+  def createTask(
+      orderId: String,
+      items: List[FulfilmentItem],
+      shippingAddress: Address
+  ): F[FulfilmentTask]
+
+  def get(orderId: String): F[Option[FulfilmentTask]]
+
+  def list(state: Option[FulfilmentState]): F[List[FulfilmentTask]]
+
+  def startPicking(
+      orderId: String
+  ): F[Either[FulfilmentFailure, FulfilmentTask]]
+
+  def pack(orderId: String): F[Either[FulfilmentFailure, FulfilmentTask]]
+
+  def dispatch(
+      orderId: String,
+      trackingNo: String,
+      carrier: String
+  ): F[Either[FulfilmentFailure, FulfilmentTask]]
+
+  def fail(
+      orderId: String,
+      reason: String
+  ): F[Either[FulfilmentFailure, FulfilmentTask]]
 }
 
 object FulfilmentStore {
 
-  // codegen:fields:DEFAULT_VALUE_DECLS
+  private def invalidTransition(order: FulfilmentTask): FulfilmentFailure =
+    FulfilmentFailure.InvalidTransition(
+      s"Cannot transition order ${order.orderId} from ${order.state.wire}"
+    )
+
+  private def nonTerminalAllowed(
+      order: FulfilmentTask
+  ): Either[FulfilmentFailure, Unit] =
+    if (FulfilmentState.isTerminal(order.state))
+      Left(invalidTransition(order))
+    else Right(())
 
   def inMemory[F[_]: Sync]: F[FulfilmentStore[F]] =
-    Ref.of[F, Map[String, Fulfilment]](Map.empty).map { ref =>
-      new FulfilmentStore[F] {
-        def create( /* codegen:fields:CREATE_PARAMS */ ): F[Fulfilment] =
-          for {
-            id <- Sync[F].delay(java.util.UUID.randomUUID().toString)
-            now <- Sync[F].realTimeInstant
-            entity = Fulfilment(
-              id, /* codegen:fields:CONSTRUCT_ARGS */ now,
-              now
-            )
-            _ <- ref.update(_ + (id -> entity))
-          } yield entity
+    inMemoryWithOutbox[F].map(_._1)
 
-        def get(id: String): F[Option[Fulfilment]] = ref.get.map(_.get(id))
-
-        def update(
-            id: String
-            /* codegen:fields:UPDATE_PARAMS */
-        ): F[Option[Fulfilment]] =
-          for {
-            now <- Sync[F].realTimeInstant
-            updated <- ref.modify { entities =>
-              entities.get(id) match {
-                case None           => (entities, None)
-                case Some(existing) =>
-                  val next =
-                    existing.copy(
-                      /* codegen:fields:COPY_ARGS */
-                      updatedAt = now
-                    )
-                  (entities + (id -> next), Some(next))
+  def inMemoryWithOutbox[F[_]: Sync]
+      : F[(FulfilmentStore[F], Ref[F, List[(String, EventEnvelope)]])] =
+    for {
+      tasks <- Ref.of[F, Map[String, FulfilmentTask]](Map.empty)
+      outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
+    } yield {
+      def transition(
+          orderId: String,
+          update: FulfilmentTask => Either[FulfilmentFailure, FulfilmentTask],
+          event: FulfilmentTask => F[Option[EventEnvelope]]
+      ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+        tasks.modify { current =>
+          current.get(orderId) match {
+            case None => (current, Left(FulfilmentFailure.NotFound))
+            case Some(existing) =>
+              update(existing) match {
+                case Left(error) => (current, Left(error))
+                case Right(updated) =>
+                  (current + (orderId -> updated), Right(updated))
               }
+          }
+        }.flatMap {
+          case Right(updated) =>
+            event(updated).flatMap {
+              case Some(envelope) =>
+                outbox
+                  .update(_ :+ (orderId -> envelope))
+                  .as(Right(updated))
+              case None => Sync[F].pure(Right(updated))
             }
-          } yield updated
+          case Left(error) => Sync[F].pure(Left(error))
+        }
 
-        def delete(id: String): F[Boolean] =
-          ref.modify { entities =>
-            if (entities.contains(id)) (entities - id, true)
-            else (entities, false)
-          }
-
-        def list(limit: Int, offset: Int): F[(List[Fulfilment], Long)] =
-          ref.get.map { entities =>
-            val sorted = entities.values.toList
-              .sortBy(_.createdAt)(using Ordering[java.time.Instant].reverse)
-            (sorted.slice(offset, offset + limit), sorted.size.toLong)
-          }
-
+      val store = new FulfilmentStore[F] {
         def ping: F[Boolean] = Sync[F].pure(true)
+
+        def createTask(
+            orderId: String,
+            items: List[FulfilmentItem],
+            shippingAddress: Address
+        ): F[FulfilmentTask] =
+          tasks.modify { current =>
+            current.get(orderId) match {
+              case Some(existing) => (current, existing)
+              case None =>
+                val now = java.time.Instant.now()
+                val task = FulfilmentTask(
+                  orderId,
+                  FulfilmentState.Pending,
+                  items,
+                  shippingAddress,
+                  None,
+                  None,
+                  None,
+                  now,
+                  now
+                )
+                (current + (orderId -> task), task)
+            }
+          }
+
+        def get(orderId: String): F[Option[FulfilmentTask]] =
+          tasks.get.map(_.get(orderId))
+
+        def list(state: Option[FulfilmentState]): F[List[FulfilmentTask]] =
+          tasks.get.map(
+            _.values.toList
+              .filter(task => state.forall(_ == task.state))
+              .sortBy(_.createdAt)
+          )
+
+        def startPicking(
+            orderId: String
+        ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+          transition(
+            orderId,
+            task =>
+              if (task.state == FulfilmentState.Pending)
+                Right(
+                  task.copy(
+                    state = FulfilmentState.Picking,
+                    updatedAt = java.time.Instant.now()
+                  )
+                )
+              else Left(invalidTransition(task)),
+            _ => Sync[F].pure(None)
+          )
+
+        def pack(
+            orderId: String
+        ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+          transition(
+            orderId,
+            task =>
+              if (task.state == FulfilmentState.Picking)
+                Right(
+                  task.copy(
+                    state = FulfilmentState.Packed,
+                    updatedAt = java.time.Instant.now()
+                  )
+                )
+              else Left(invalidTransition(task)),
+            _ => Sync[F].pure(None)
+          )
+
+        def dispatch(
+            orderId: String,
+            trackingNo: String,
+            carrier: String
+        ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+          val tracking = trackingNo.trim
+          val carrierName = carrier.trim
+          if (tracking.isEmpty || carrierName.isEmpty)
+            Sync[F].pure(
+              Left(
+                FulfilmentFailure.InvalidRequest(
+                  "trackingNo and carrier are required"
+                )
+              )
+            )
+          else
+            transition(
+              orderId,
+              task =>
+                if (task.state == FulfilmentState.Packed)
+                  Right(
+                    task.copy(
+                      state = FulfilmentState.Dispatched,
+                      trackingNo = Some(tracking),
+                      carrier = Some(carrierName),
+                      updatedAt = java.time.Instant.now()
+                    )
+                  )
+                else Left(invalidTransition(task)),
+              task =>
+                FulfilmentEvents
+                  .dispatchConfirmed[F](orderId, tracking, task.items)
+                  .map(Some(_))
+            )
+        }
+
+        def fail(
+            orderId: String,
+            reason: String
+        ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+          val failureReason = reason.trim
+          if (failureReason.isEmpty)
+            Sync[F].pure(
+              Left(FulfilmentFailure.InvalidRequest("reason is required"))
+            )
+          else
+            transition(
+              orderId,
+              task =>
+                nonTerminalAllowed(task).map(_ =>
+                  task.copy(
+                    state = FulfilmentState.DispatchFailed,
+                    failureReason = Some(failureReason),
+                    updatedAt = java.time.Instant.now()
+                  )
+                ),
+              task =>
+                FulfilmentEvents
+                  .dispatchFailed[F](orderId, failureReason)
+                  .map(Some(_))
+            )
+        }
       }
+      (store, outbox)
     }
 
-  private val insertFulfilment: skunk.Query[
-    (UUID /* codegen:fields:SQL_INSERT_TUPLE_TYPE */ ),
-    (OffsetDateTime, OffsetDateTime)
-  ] =
-    sql"""
-      INSERT INTO "fulfilment" (id/* codegen:fields:SQL_INSERT_COLUMNS */)
-      VALUES ($uuid/* codegen:fields:SQL_INSERT_PARAMS */)
-      RETURNING created_at, updated_at
-    """.query(timestamptz *: timestamptz)
-
-  private val selectFulfilment: skunk.Query[
-    UUID,
-    ( /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime, OffsetDateTime)
-  ] =
-    sql"""
-      SELECT /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at
-      FROM "fulfilment"
-      WHERE id = $uuid
-    """.query( /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz)
-
-  private val updateFulfilment: skunk.Query[
-    ( /* codegen:fields:SQL_UPDATE_TUPLE_TYPE */ UUID),
-    ( /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime, OffsetDateTime)
-  ] =
-    sql"""
-      UPDATE "fulfilment"
-      SET /* codegen:fields:SQL_UPDATE_SET */updated_at = now()
-      WHERE id = $uuid
-      RETURNING /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at
-    """.query( /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz)
-
-  private val deleteFulfilment: skunk.Query[UUID, UUID] =
-    sql"""
-      DELETE FROM "fulfilment"
-      WHERE id = $uuid
-      RETURNING id
-    """.query(uuid)
-
-  private val pingQuery: skunk.Query[skunk.Void, Int] = sql"SELECT 1".query(
-    int4
+  private type TaskRow = (
+      UUID,
+      FulfilmentState,
+      List[FulfilmentItem],
+      Address,
+      Option[String],
+      Option[String],
+      Option[String],
+      OffsetDateTime,
+      OffsetDateTime
   )
 
-  // count(*) OVER() rides along with each row so the page and its total are
-  // read from one consistent query result, not two separate round trips that
-  // could otherwise observe different data if a write lands in between.
-  private val selectFulfilmentPage: skunk.Query[
-    (Int, Int),
-    (
-        UUID, /* codegen:fields:SQL_SELECT_TUPLE_TYPE */ OffsetDateTime,
-        OffsetDateTime,
-        Long
-    )
-  ] =
+  private val stateCodec: skunk.Codec[FulfilmentState] =
+    text.eimap(value =>
+      FulfilmentState
+        .fromString(value)
+        .toRight(s"Unknown fulfilment state: $value")
+    )(_.wire)
+
+  private val selectTask: skunk.Query[UUID, TaskRow] =
     sql"""
-      SELECT id, /* codegen:fields:SQL_SELECT_COLUMNS */created_at, updated_at,
-             count(*) OVER() AS total_count
-      FROM "fulfilment"
-      ORDER BY created_at DESC
-      LIMIT $int4 OFFSET $int4
+      SELECT order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at FROM "fulfilment_task" WHERE order_id = $uuid
     """.query(
-      uuid *: /* codegen:fields:SQL_SELECT_CODEC */ timestamptz *: timestamptz *: int8
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
     )
 
-  // Fallback for when selectFulfilmentPage returns zero rows (empty
-  // table, or offset past the end) -- count(*) OVER() has no row to ride along
-  // with in that case, so the total still needs a direct query.
-  private val countFulfilment: skunk.Query[skunk.Void, Long] =
-    sql"""SELECT count(*) FROM "fulfilment"""".query(int8)
+  private val selectTaskForUpdate: skunk.Query[UUID, TaskRow] =
+    sql"""
+      SELECT order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at FROM "fulfilment_task" WHERE order_id = $uuid FOR UPDATE
+    """.query(
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
+    )
+
+  private val selectAllTasks: skunk.Query[skunk.Void, TaskRow] =
+    sql"""
+      SELECT order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at FROM "fulfilment_task" ORDER BY created_at
+    """.query(
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
+    )
+
+  private val insertTask: skunk.Query[(UUID, List[FulfilmentItem], Address), TaskRow] =
+    sql"""
+      INSERT INTO "fulfilment_task" (order_id, state, items, shipping_address)
+      VALUES ($uuid, 'PENDING', ${jsonb[List[FulfilmentItem]]}, ${jsonb[Address]})
+      ON CONFLICT (order_id) DO NOTHING
+      RETURNING order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at
+    """.query(
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
+    )
+
+  private val updateTaskState: skunk.Query[
+    (FulfilmentState, Option[String], Option[String], Option[String], UUID),
+    TaskRow
+  ] =
+    sql"""
+      UPDATE "fulfilment_task"
+      SET state = $stateCodec, tracking_no = ${text.opt}, carrier = ${text.opt},
+          failure_reason = ${text.opt}, updated_at = now()
+      WHERE order_id = $uuid
+      RETURNING order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at
+    """.query(
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
+    )
+
+  private val insertOutboxEvent
+      : skunk.Command[(UUID, String, EventEnvelope, String)] =
+    sql"""
+      INSERT INTO outbox_events (id, aggregate_id, payload, correlation_id)
+      VALUES ($uuid, $text, ${jsonb[EventEnvelope]}, $text)
+    """.command
+
+  private val pingQuery: skunk.Query[skunk.Void, Int] = sql"SELECT 1".query(int4)
+
+  private def toTask(row: TaskRow): FulfilmentTask = {
+    val (
+      orderId,
+      state,
+      items,
+      address,
+      trackingNo,
+      carrier,
+      failureReason,
+      createdAt,
+      updatedAt
+    ) = row
+    FulfilmentTask(
+      orderId.toString,
+      state,
+      items,
+      address,
+      trackingNo,
+      carrier,
+      failureReason,
+      createdAt.toInstant,
+      updatedAt.toInstant
+    )
+  }
 
   def postgres[F[_]: Async: Console: Network](
       config: PostgresConfig,
@@ -177,19 +365,13 @@ object FulfilmentStore {
           .withUnit("s")
           .create
           .map { histogram =>
-            /** Times a Skunk query, recording a `db.client.operation.duration`
-              * measurement tagged with `db.system`/`db.operation` (OTel
-              * semantic-convention names), plus `error.type` if it fails - this
-              * is this service's only Postgres consumer, so it's instrumented
-              * directly here rather than via a new purerest combinator.
-              */
             def timed[A](operation: String)(fa: F[A]): F[A] =
               for {
                 start <- Async[F].monotonic
                 result <- fa.attempt
                 end <- Async[F].monotonic
                 outcomeAttributes = result match {
-                  case Right(_)    => Nil
+                  case Right(_) => Nil
                   case Left(error) =>
                     List(Attribute("error.type", error.getClass.getName))
                 }
@@ -204,147 +386,209 @@ object FulfilmentStore {
               } yield a
 
             new FulfilmentStore[F] {
-              def create( /* codegen:fields:CREATE_PARAMS */ ): F[Fulfilment] =
-                for {
-                  id <- Sync[F].delay(UUID.randomUUID())
-                  timestamps <- timed("insert") {
-                    pool.use { session =>
-                      session
-                        .prepare(insertFulfilment)
-                        .flatMap(
-                          _.unique(
-                            (id /* codegen:fields:SQL_INSERT_TUPLE_ARGS */ )
-                          )
-                        )
-                    }
+              def ping: F[Boolean] =
+                timed("ping")(pool.use(_.unique(pingQuery)))
+                  .attempt
+                  .map(_.isRight)
+
+              def createTask(
+                  orderId: String,
+                  items: List[FulfilmentItem],
+                  shippingAddress: Address
+              ): F[FulfilmentTask] =
+                timed("insert") {
+                  pool.use { session =>
+                    for {
+                      id <- Sync[F].delay(UUID.fromString(orderId))
+                      inserted <- session
+                        .prepare(insertTask)
+                        .flatMap(_.option((id, items, shippingAddress)))
+                      task <- inserted match {
+                        case Some(row) => Sync[F].pure(toTask(row))
+                        case None =>
+                          session
+                            .prepare(selectTask)
+                            .flatMap(_.unique(id))
+                            .map(toTask)
+                      }
+                    } yield task
                   }
-                } yield {
-                  val (createdAt, updatedAt) = timestamps
-                  Fulfilment(
-                    id.toString,
-                    /* codegen:fields:CONSTRUCT_ARGS */
-                    createdAt.toInstant,
-                    updatedAt.toInstant
-                  )
                 }
 
-              def get(id: String): F[Option[Fulfilment]] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(None)
-                  case Some(uuid) =>
-                    for {
-                      row <- timed("select") {
-                        pool.use { session =>
-                          session
-                            .prepare(selectFulfilment)
-                            .flatMap(_.option(uuid))
-                        }
-                      }
-                    } yield row.map {
-                      case (
-                            /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                            updatedAt
-                          ) =>
-                        Fulfilment(
-                          id,
-                          /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                          createdAt.toInstant,
-                          updatedAt.toInstant
-                        )
-                    }
-                }
-
-              def update(
-                  id: String
-                  /* codegen:fields:UPDATE_PARAMS */
-              ): F[Option[Fulfilment]] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(None)
-                  case Some(uuid) =>
-                    for {
-                      row <- timed("update") {
-                        pool.use { session =>
-                          session
-                            .prepare(updateFulfilment)
-                            .flatMap(
-                              _.option(
-                                ( /* codegen:fields:SQL_UPDATE_TUPLE_ARGS */ uuid)
-                              )
-                            )
-                        }
-                      }
-                    } yield row.map {
-                      case (
-                            /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                            updatedAt
-                          ) =>
-                        Fulfilment(
-                          id,
-                          /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                          createdAt.toInstant,
-                          updatedAt.toInstant
-                        )
-                    }
-                }
-
-              def delete(id: String): F[Boolean] =
-                scala.util.Try(UUID.fromString(id)).toOption match {
-                  case None       => Sync[F].pure(false)
-                  case Some(uuid) =>
-                    timed("delete") {
+              def get(orderId: String): F[Option[FulfilmentTask]] =
+                scala.util.Try(UUID.fromString(orderId)).toOption match {
+                  case None => Sync[F].pure(None)
+                  case Some(id) =>
+                    timed("select") {
                       pool.use { session =>
-                        session
-                          .prepare(deleteFulfilment)
-                          .flatMap(_.option(uuid))
-                          .map(_.isDefined)
+                        session.prepare(selectTask).flatMap(_.option(id))
                       }
-                    }
+                    }.map(_.map(toTask))
                 }
 
               def list(
-                  limit: Int,
-                  offset: Int
-              ): F[(List[Fulfilment], Long)] =
-                for {
-                  rows <- timed("list") {
-                    pool.use { session =>
-                      session
-                        .prepare(selectFulfilmentPage)
-                        .flatMap(_.stream((limit, offset), 1024).compile.toList)
-                    }
+                  state: Option[FulfilmentState]
+              ): F[List[FulfilmentTask]] =
+                timed("select") {
+                  pool.use { session =>
+                    session
+                      .prepare(selectAllTasks)
+                      .flatMap(_.stream(skunk.Void, 64).compile.toList)
                   }
-                  total <- rows.headOption match {
-                    case Some(row) =>
-                      // The row's last element is always count(*) OVER()'s
-                      // total_count; using productElement keeps this working
-                      // regardless of how many field-spec columns precede it.
-                      Sync[F].pure(
-                        row
-                          .productElement(row.productArity - 1)
-                          .asInstanceOf[Long]
-                      )
-                    case None =>
-                      timed("count") { pool.use(_.unique(countFulfilment)) }
-                  }
-                } yield rows.map {
-                  case (
-                        id,
-                        /* codegen:fields:SQL_SELECT_PATTERN_VARS */ createdAt,
-                        updatedAt,
-                        _
-                      ) =>
-                    Fulfilment(
-                      id.toString,
-                      /* codegen:fields:SQL_SELECT_CONSTRUCT_ARGS */
-                      createdAt.toInstant,
-                      updatedAt.toInstant
-                    )
-                } -> total
+                }.map(_.map(toTask).filter(task => state.forall(_ == task.state)))
 
-              def ping: F[Boolean] =
-                timed("ping") {
-                  pool.use(_.unique(pingQuery))
-                }.attempt.map(_.isRight)
+              private def transition(
+                  orderId: String,
+                  update: FulfilmentTask => Either[FulfilmentFailure, FulfilmentTask],
+                  event: FulfilmentTask => F[Option[EventEnvelope]]
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+                scala.util.Try(UUID.fromString(orderId)).toOption match {
+                  case None => Sync[F].pure(Left(FulfilmentFailure.NotFound))
+                  case Some(id) =>
+                    timed("update") {
+                      pool.use { session =>
+                        session.transaction.use { _ =>
+                          session
+                            .prepare(selectTaskForUpdate)
+                            .flatMap(_.option(id))
+                            .flatMap {
+                              case None =>
+                                Sync[F].pure(
+                                  Left(FulfilmentFailure.NotFound)
+                                )
+                              case Some(row) =>
+                                val current = toTask(row)
+                                update(current) match {
+                                  case Left(error) =>
+                                    Sync[F].pure(Left(error))
+                                  case Right(next) =>
+                                    for {
+                                      updated <- session
+                                        .prepare(updateTaskState)
+                                        .flatMap(
+                                          _.unique(
+                                            (
+                                              next.state,
+                                              next.trackingNo,
+                                              next.carrier,
+                                              next.failureReason,
+                                              id
+                                            )
+                                          )
+                                        )
+                                        .map(toTask)
+                                      _ <- event(updated).flatMap {
+                                        case None => Sync[F].unit
+                                        case Some(envelope) =>
+                                          Sync[F]
+                                            .delay(UUID.randomUUID())
+                                            .flatMap { outboxId =>
+                                              session
+                                                .prepare(insertOutboxEvent)
+                                                .flatMap(
+                                                  _.execute(
+                                                    (
+                                                      outboxId,
+                                                      orderId,
+                                                      envelope,
+                                                      envelope.correlationId
+                                                    )
+                                                  ).void
+                                                )
+                                            }
+                                      }
+                                    } yield Right(updated)
+                                }
+                            }
+                        }
+                      }
+                    }
+                }
+
+              def startPicking(
+                  orderId: String
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+                transition(
+                  orderId,
+                  task =>
+                    if (task.state == FulfilmentState.Pending)
+                      Right(task.copy(state = FulfilmentState.Picking))
+                    else Left(invalidTransition(task)),
+                  _ => Sync[F].pure(None)
+                )
+
+              def pack(
+                  orderId: String
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+                transition(
+                  orderId,
+                  task =>
+                    if (task.state == FulfilmentState.Picking)
+                      Right(task.copy(state = FulfilmentState.Packed))
+                    else Left(invalidTransition(task)),
+                  _ => Sync[F].pure(None)
+                )
+
+              def dispatch(
+                  orderId: String,
+                  trackingNo: String,
+                  carrier: String
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+                val tracking = trackingNo.trim
+                val carrierName = carrier.trim
+                if (tracking.isEmpty || carrierName.isEmpty)
+                  Sync[F].pure(
+                    Left(
+                      FulfilmentFailure.InvalidRequest(
+                        "trackingNo and carrier are required"
+                      )
+                    )
+                  )
+                else
+                  transition(
+                    orderId,
+                    task =>
+                      if (task.state == FulfilmentState.Packed)
+                        Right(
+                          task.copy(
+                            state = FulfilmentState.Dispatched,
+                            trackingNo = Some(tracking),
+                            carrier = Some(carrierName)
+                          )
+                        )
+                      else Left(invalidTransition(task)),
+                    task =>
+                      FulfilmentEvents
+                        .dispatchConfirmed[F](orderId, tracking, task.items)
+                        .map(Some(_))
+                  )
+              }
+
+              def fail(
+                  orderId: String,
+                  reason: String
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+                val failureReason = reason.trim
+                if (failureReason.isEmpty)
+                  Sync[F].pure(
+                    Left(FulfilmentFailure.InvalidRequest("reason is required"))
+                  )
+                else
+                  transition(
+                    orderId,
+                    task =>
+                      nonTerminalAllowed(task).map(_ =>
+                        task.copy(
+                          state = FulfilmentState.DispatchFailed,
+                          failureReason = Some(failureReason)
+                        )
+                      ),
+                    task =>
+                      FulfilmentEvents
+                        .dispatchFailed[F](orderId, failureReason)
+                        .map(Some(_))
+                  )
+              }
             }
           }
       }

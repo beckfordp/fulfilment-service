@@ -35,7 +35,7 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
           val rs = conn
             .createStatement()
             .executeQuery(
-              "select column_name, data_type from information_schema.columns where table_name = 'fulfilment' order by ordinal_position"
+              "select column_name, data_type from information_schema.columns where table_name = 'fulfilment_task' order by ordinal_position"
             )
           val columns = Iterator
             .unfold(())(_ =>
@@ -45,8 +45,13 @@ class MigrationsSuite extends CatsEffectSuite with TestContainerForAll {
           assertEquals(
             columns,
             List(
-              "id",
-              // codegen:fields:TEST_MIGRATION_COLUMN
+              "order_id",
+              "state",
+              "items",
+              "shipping_address",
+              "tracking_no",
+              "carrier",
+              "failure_reason",
               "created_at",
               "updated_at"
             )
