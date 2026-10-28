@@ -4,8 +4,6 @@ This file tracks all major tracks for the project.
 
 ---
 
-- [~] **Track: US-17.1–17.3 + 18.1 — fulfilment core**
-  *Link: [./tracks/fulfilment-core_20261028/](./tracks/fulfilment-core_20261028/)*
 
 ## Backlog
 
