@@ -27,29 +27,25 @@ sbt run                # runs migrations, then starts the service on :8080
 Then, in another terminal:
 
 ```
-# Create a fulfilment
-curl -X POST http://localhost:8080/fulfilments \
-  -H "Content-Type: application/json" -d '{"item":"widget","quantity":3}'
+# Operator queue (tasks are created by PaymentAuthorized events)
+curl http://localhost:8080/fulfilment-tasks
+curl "http://localhost:8080/fulfilment-tasks?state=PACKED"
 
-# Read it back (substitute the id from the response above)
-curl http://localhost:8080/fulfilments/<id>
+# Drive a task (404 unknown, 409 invalid transition)
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/start-picking
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/pack
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/dispatch \
+  -H "Content-Type: application/json" \
+  -d '{"trackingNo":"GLN-1234","carrier":"DHL Express"}'
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/fail \
+  -H "Content-Type: application/json" -d '{"reason":"Item damaged"}'
 
-# List a page of them, newest first. limit defaults to 20 (max 100), offset
-# defaults to 0; the collection's total size comes back in the X-Total-Count
-# response header. Out-of-range limit/offset values return 400.
-curl -i "http://localhost:8080/fulfilments?limit=10&offset=0"
-
-# Partially update it (quantity/status)
-curl -X PATCH http://localhost:8080/fulfilments/<id> \
-  -H "Content-Type: application/json" -d '{"quantity":5,"status":"shipped"}'
-
-# Or fully replace it (same required fields as PATCH — this resource has no
-# other client-writable ones — but PUT is idempotent full-replace semantics)
-curl -X PUT http://localhost:8080/fulfilments/<id> \
-  -H "Content-Type: application/json" -d '{"quantity":5,"status":"shipped"}'
-
-# Delete it
-curl -X DELETE http://localhost:8080/fulfilments/<id>
+# Dev-only (simulation.enabled): advance one step / force a failure
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/simulate-next \
+  -H "Content-Type: application/json" -d '{}'
+curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/simulate-next \
+  -H "Content-Type: application/json" \
+  -d '{"forceFailure":true,"reason":"Simulated failure"}'
 
 # Liveness / readiness
 curl http://localhost:8080/health
@@ -61,11 +57,10 @@ Swagger UI (generated from the same tapir endpoint definitions as the real route
 
 ## View Kafka AsyncAPI docs
 
-This service registers one illustrative Kafka channel (`ExampleEvent` on `fulfilment-events`)
-for [AsyncAPI](https://www.asyncapi.com/) documentation via `purekafka.docs` (see
-`ExampleAsyncApiChannels`), the same way tapir generates the OpenAPI docs above. Replace it with
-your real event types in the same file (or a new one, updating `build.sbt`'s
-`asyncApiChannelsClass`).
+This service consumes `PaymentAuthorized` on `payment-events` and publishes
+`DispatchConfirmed`/`DispatchFailed` on `fulfilment-events` (outbox + Debezium), registering all
+three for [AsyncAPI](https://www.asyncapi.com/) documentation via `purekafka.docs` (see
+`AsyncApiChannels`).
 
 Generation is handled by the `sbt-purekafka-docs` plugin (`asyncApiChannelsClass` in
 `build.sbt`), auto-chained after `Compile / compile` — every `sbt compile`/`run`/

@@ -51,7 +51,7 @@ lazy val root = project
     // build-time generated docs default to name.value/version.value
     // ("fulfilment-service"/"0.1.0") and silently disagree with what's
     // actually served live.
-    asyncApiChannelsClass := "fulfilmentservice.examples.ExampleAsyncApiChannels",
+    asyncApiChannelsClass := "fulfilmentservice.AsyncApiChannels",
     asyncApiTitle := "Fulfilment Service",
     asyncApiVersion := "1.0",
     // Drives schemaRegistryCheck (Rework 5 step 3/4, ADR 0003) - reuses

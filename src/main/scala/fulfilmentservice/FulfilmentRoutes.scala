@@ -233,26 +233,26 @@ object FulfilmentRoutes {
         case None       => Async[F].pure(Left(FulfilmentFailure.NotFound))
         case Some(task) =>
           val outcome: F[Either[FulfilmentFailure, FulfilmentTask]] =
-            task.state match {
-              case FulfilmentState.Pending => store.startPicking(orderId)
-              case FulfilmentState.Picking => store.pack(orderId)
-              case FulfilmentState.Packed  =>
-                if (request.forceFailure.getOrElse(false))
-                  store.fail(
-                    orderId,
-                    request.reason.getOrElse("Simulated dispatch failure")
-                  )
-                else
+            if (request.forceFailure.getOrElse(false))
+              store.fail(
+                orderId,
+                request.reason.getOrElse("Simulated dispatch failure")
+              )
+            else
+              task.state match {
+                case FulfilmentState.Pending => store.startPicking(orderId)
+                case FulfilmentState.Picking => store.pack(orderId)
+                case FulfilmentState.Packed  =>
                   store.dispatch(orderId, generatedTrackingNo(), "DHL Express")
-              case _ =>
-                Async[F].pure(
-                  Left(
-                    FulfilmentFailure.InvalidTransition(
-                      s"Order $orderId is already ${task.state.wire}"
+                case _ =>
+                  Async[F].pure(
+                    Left(
+                      FulfilmentFailure.InvalidTransition(
+                        s"Order $orderId is already ${task.state.wire}"
+                      )
                     )
                   )
-                )
-            }
+              }
           outcome.flatMap(
             respond(
               Map("order_id" -> orderId, "simulated" -> "true")

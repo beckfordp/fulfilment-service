@@ -15,7 +15,8 @@ final case class FulfilmentItem(
 
 object FulfilmentItem {
   implicit val codec: Codec[FulfilmentItem] = deriveCodec
-  implicit val schema: Schema[FulfilmentItem] = Schema.derived
+  implicit val schema: Schema[FulfilmentItem] =
+    Schema.derived[FulfilmentItem].copy(name = None)
 }
 
 final case class Address(

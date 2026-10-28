@@ -44,9 +44,13 @@ Checkout Journey 3; depends on Journey 1's `PaymentAuthorized`. Its
 authorization expiry.
 
 ## Events
-- Consumes: `payment-events` (`PaymentAuthorized`).
-- Publishes: `fulfilment-events` (`DispatchConfirmed`/`DispatchFailed`) via the
-  transactional outbox + Debezium (ADR 0008/0009), shared envelope (ADR 0009).
+- Consumes: `payment-events` (`PaymentAuthorized`) — looks the order up via
+  order-service `GET /orders/{id}` and snapshots items + shipping address.
+- Publishes: `fulfilment-events` (`DispatchConfirmed` with a full item
+  snapshot / `DispatchFailed` with a reason) via the transactional outbox +
+  Debezium (ADR 0008/0009).
+- Operator API: `GET /fulfilment-tasks`, `POST .../{orderId}/start-picking`,
+  `/pack`, `/dispatch`, `/fail`, plus config-gated `/simulate-next`.
 
 ## Out of scope
 - Real warehouse/carrier integrations; stock/inventory decisions (order-service

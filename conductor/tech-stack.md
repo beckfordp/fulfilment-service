@@ -20,11 +20,14 @@
 - Flyway 11.8.2; PostgreSQL 16, database `fulfilment`
 
 ## Messaging
-- fs2-kafka 3.6.0 + purekafka 0.3.0 — consumer (`PaymentAuthorized`) with
-  StreamSupervisor + DeadLetter; transactional outbox + Debezium for
+- fs2-kafka 3.6.0 + purekafka 0.3.0 — `PaymentAuthorizedConsumer` (null-safe,
+  envelope/eventType filtered, StreamSupervisor + DeadLetter, group
+  `fulfilment-service-payment-events`); transactional outbox + Debezium for
   `DispatchConfirmed`/`DispatchFailed`
-- Optional order-service client (`GET /orders/{id}`) for the task snapshot,
-  resilience-wrapped like other service clients
+- `OrderClient` — resilience-wrapped `GET /orders/{id}` snapshot (items +
+  shipping address), retry + circuit breaker from `order-client` config
+- `simulate-next` is registered only when `fulfilment.simulation.enabled`
+  (local values true)
 
 ## Testing
 - munit 1.3.6 + munit-cats-effect 2.2.1, log4cats-testing, testcontainers

@@ -5,7 +5,6 @@ import com.comcast.ip4s._
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
 
-import fulfilmentservice.examples.ExampleAsyncApiChannels
 
 /** Acquires every dependency this service needs, delegates route assembly to
   * `AppRoutes.all`, and serves the result — a single flat `Resource`
@@ -57,7 +56,7 @@ object Main extends IOApp.Simple {
       store,
       telemetry,
       config.simulation.enabled,
-      ExampleAsyncApiChannels.channels
+      AsyncApiChannels.channels
     )
     _ <- EmberServerBuilder
       .default[IO]
