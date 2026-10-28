@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: sbt/setup-sbt@v1
+
+      # GITHUB_TOKEN is the built-in, same-repo-scoped token GitHub Actions provides
+      # automatically - it can't resolve GitHub Packages published from a *different*
+      # repo (purerestlib is published from beckfordp/purerest), so this build's
+      # GITHUB_TOKEN comes from a repository secret (GH_PACKAGES_TOKEN, a PAT with
+      # read:packages scope) instead.
+      - name: scalafmtCheck + test
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: sbt scalafmtCheck Test/scalafmtCheck test
+
+      # Build-time schema-compatibility check (Rework 5 step 3/4, ADR 0003) -
+      # this runner has no route to whatever Apicurio instance build.sbt's
+      # schemaRegistryUrl defaults to, so a throwaway Apicurio container is
+      # started here instead; SCHEMA_REGISTRY_URL overrides that default.
+      - name: Start a throwaway Apicurio Registry
+        run: |
+          docker run -d --name apicurio -p 8080:8080 apicurio/apicurio-registry:3.3.2
+          for _ in $(seq 1 60); do
+            docker exec apicurio curl --fail --silent http://localhost:9000/health/ready && break
+            sleep 2
+          done
+
+      - name: schemaRegistryCheck
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          SCHEMA_REGISTRY_URL: http://localhost:8080
+        run: sbt schemaRegistryCheck
+
+      - name: Stop the throwaway Apicurio Registry
+        if: always()
+        run: docker rm -f apicurio
