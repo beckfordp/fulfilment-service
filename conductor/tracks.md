@@ -2,7 +2,7 @@
 
 This file tracks all major tracks for the project.
 
-- [ ] **Track: TD-15.5 — Cross-repo consistency hardening (fulfilment-service)**
+- [x] **Track: TD-15.5 — Cross-repo consistency hardening (fulfilment-service)**
   *Link: [./tracks/td15-fulfilment-hardening_20261029/](./tracks/td15-fulfilment-hardening_20261029/)*
 
 ---

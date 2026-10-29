@@ -1,7 +1,7 @@
 {
   "track_id": "td15-fulfilment-hardening_20261029",
   "type": "chore",
-  "status": "new",
+  "status": "completed",
   "created_at": "2026-10-29T00:00:00Z",
   "updated_at": "2026-10-29T00:00:00Z",
   "description": "TD-15.5 — fulfilment-service: typed OrderId, Uri client config, log redaction, asyncApiHtmlDir, ScalaCheck, narrower constraints"
