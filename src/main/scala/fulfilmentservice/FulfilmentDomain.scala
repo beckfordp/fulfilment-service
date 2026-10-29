@@ -1,5 +1,6 @@
 package fulfilmentservice
 
+import fulfilmentservice.domain.OrderId
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 import sttp.tapir.Schema
@@ -49,7 +50,7 @@ object FulfilmentState {
 }
 
 final case class FulfilmentTask(
-    orderId: String,
+    orderId: OrderId,
     state: FulfilmentState,
     items: List[FulfilmentItem],
     shippingAddress: Address,

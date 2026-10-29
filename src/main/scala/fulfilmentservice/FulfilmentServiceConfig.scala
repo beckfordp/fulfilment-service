@@ -10,6 +10,8 @@ import purekafka.resilience.{
   ResilienceConfig => KafkaResilienceConfig,
   RetryConfig => KafkaRetryConfig
 }
+import org.http4s.Uri
+import pureconfig.error.CannotConvert
 import purerest.resilience.ResilienceConfig
 
 final case class PostgresConfig(
@@ -20,8 +22,19 @@ final case class PostgresConfig(
     password: String
 ) derives ConfigReader
 
+// Client base URLs are parsed/validated as `Uri` at config-load time, so no
+// `Uri.unsafeFromString` can throw later during wiring (TD-15).
+given ConfigReader[Uri] =
+  ConfigReader[String].emap { raw =>
+    Uri.fromString(raw) match {
+      case Right(uri)    => Right(uri)
+      case Left(failure) =>
+        Left(CannotConvert(raw, "Uri", failure.message))
+    }
+  }
+
 final case class OrderClientConfig(
-    baseUrl: String,
+    baseUrl: Uri,
     resilience: ResilienceConfig
 ) derives ConfigReader
 
@@ -42,6 +55,7 @@ final case class FulfilmentServiceConfig(
     port: Int,
     metricsPort: Int,
     serviceName: String,
+    asyncApiHtmlDir: String,
     postgres: PostgresConfig,
     orderClient: OrderClientConfig,
     simulation: SimulationConfig,

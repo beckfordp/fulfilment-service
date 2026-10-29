@@ -29,8 +29,7 @@ object AppRoutes {
       telemetry: Telemetry[F],
       simulationEnabled: Boolean,
       channels: List[AsyncApiChannel[?]],
-      staticAsyncApiDocsDir: String =
-        sys.env.getOrElse("ASYNCAPI_HTML_DIR", "target/asyncapi-docs")
+      staticAsyncApiDocsDir: String
   ): HttpRoutes[F] = {
     // Explicit, non-deprecated Files[F] - without it, fileService[F] below
     // falls back to fs2's deprecated Files.implicitForAsync conversion.

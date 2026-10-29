@@ -1,7 +1,10 @@
 package fulfilmentservice
 
 import cats.effect.IO
+import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
+
+import java.util.UUID
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.implicits._
 import org.http4s.{HttpRoutes, Method, Request, Response, Status, Uri}
@@ -19,8 +22,16 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
     def routes(simulation: Boolean = true): HttpRoutes[IO] =
       FulfilmentRoutes.routes[IO](store, simulation, NoOpLogger[IO])
 
-    def seed(orderId: String): IO[Unit] =
-      store.createTask(orderId, List(item), address).void
+    def id(label: String): OrderId =
+      OrderId.fromUuid(UUID.nameUUIDFromBytes(label.getBytes("UTF-8")))
+
+    def render(label: String): String = OrderId.render(id(label))
+
+    def path(label: String, action: String): String =
+      s"/fulfilment-tasks/${render(label)}/$action"
+
+    def seed(label: String): IO[Unit] =
+      store.createTask(id(label), List(item), address).void
 
     def run(
         routes: HttpRoutes[IO],
@@ -51,7 +62,7 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       f <- fixture
       _ <- f.seed("order-1")
       _ <- f.seed("order-2")
-      _ <- f.store.startPicking("order-2")
+      _ <- f.store.startPicking(f.id("order-2"))
       all <- f.run(f.routes(), Method.GET, "/fulfilment-tasks")
       pending <- f.run(
         f.routes(),
@@ -62,8 +73,11 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       allBody <- all.as[List[TaskResponse]]
     } yield {
       assertEquals(all.status, Status.Ok)
-      assertEquals(allBody.map(_.orderId).sorted, List("order-1", "order-2"))
-      assertEquals(pendingBody.map(_.orderId), List("order-1"))
+      assertEquals(
+        allBody.map(_.orderId).sorted,
+        List(f.render("order-1"), f.render("order-2")).sorted
+      )
+      assertEquals(pendingBody.map(_.orderId), List(f.render("order-1")))
     }
   }
 
@@ -85,14 +99,14 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       picking <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/start-picking"
+        f.path("order-1", "start-picking")
       )
       pickingBody <- picking.as[TaskResponse]
-      _ <- f.run(f.routes(), Method.POST, "/fulfilment-tasks/order-1/pack")
+      _ <- f.run(f.routes(), Method.POST, f.path("order-1", "pack"))
       dispatched <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/dispatch",
+        f.path("order-1", "dispatch"),
         Some(json("""{"trackingNo":"GLN-9","carrier":"DHL"}"""))
       )
       dispatchedBody <- dispatched.as[TaskResponse]
@@ -110,12 +124,12 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
     for {
       f <- fixture
       _ <- f.seed("order-1")
-      _ <- f.store.startPicking("order-1")
-      _ <- f.store.pack("order-1")
+      _ <- f.store.startPicking(f.id("order-1"))
+      _ <- f.store.pack(f.id("order-1"))
       response <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/dispatch",
+        f.path("order-1", "dispatch"),
         Some(json("""{"trackingNo":" ","carrier":""}"""))
       )
     } yield assertEquals(response.status, Status.BadRequest)
@@ -128,13 +142,13 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       blank <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/fail",
+        f.path("order-1", "fail"),
         Some(json("""{"reason":" "}"""))
       )
       failed <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/fail",
+        f.path("order-1", "fail"),
         Some(json("""{"reason":"damaged"}"""))
       )
       body <- failed.as[TaskResponse]
@@ -152,13 +166,13 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       missing <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/unknown/start-picking"
+        f.path("unknown", "start-picking")
       )
       _ <- f.seed("order-1")
       invalid <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/pack"
+        f.path("order-1", "pack")
       )
     } yield {
       assertEquals(missing.status, Status.NotFound)
@@ -173,13 +187,15 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       response <- f.run(
         f.routes(simulation = false),
         Method.POST,
-        "/fulfilment-tasks/order-1/simulate-next",
+        f.path("order-1", "simulate-next"),
         Some(json("{}"))
       )
     } yield assertEquals(response.status, Status.NotFound)
   }
 
-  test("simulate-next advances one step, generates tracking, and can force failure") {
+  test(
+    "simulate-next advances one step, generates tracking, and can force failure"
+  ) {
     for {
       f <- fixture
       _ <- f.seed("order-1")
@@ -187,22 +203,22 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
       first <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/simulate-next",
+        f.path("order-1", "simulate-next"),
         Some(json("{}"))
       )
       firstBody <- first.as[TaskResponse]
-      _ <- f.store.pack("order-1")
+      _ <- f.store.pack(f.id("order-1"))
       dispatched <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/simulate-next",
+        f.path("order-1", "simulate-next"),
         Some(json("{}"))
       )
       dispatchedBody <- dispatched.as[TaskResponse]
       failed <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-2/simulate-next",
+        f.path("order-2", "simulate-next"),
         Some(json("""{"forceFailure":true,"reason":"simulated"}"""))
       )
       failedBody <- failed.as[TaskResponse]
@@ -219,11 +235,11 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
     for {
       f <- fixture
       _ <- f.seed("order-1")
-      _ <- f.store.fail("order-1", "gone")
+      _ <- f.store.fail(f.id("order-1"), "gone")
       response <- f.run(
         f.routes(),
         Method.POST,
-        "/fulfilment-tasks/order-1/simulate-next",
+        f.path("order-1", "simulate-next"),
         Some(json("{}"))
       )
     } yield assertEquals(response.status, Status.Conflict)

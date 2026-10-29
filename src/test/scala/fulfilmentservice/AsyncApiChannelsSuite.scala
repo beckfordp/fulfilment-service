@@ -6,9 +6,9 @@ import purekafka.docs.{ChannelDirection, PublisherKind}
 class AsyncApiChannelsSuite extends FunSuite {
 
   test("registers the consumed and produced fulfilment contracts") {
-    val channels = AsyncApiChannels.channels.map(c =>
-      (c.topic, c.eventType, c.direction)
-    ).toSet
+    val channels = AsyncApiChannels.channels
+      .map(c => (c.topic, c.eventType, c.direction))
+      .toSet
 
     assertEquals(
       channels,

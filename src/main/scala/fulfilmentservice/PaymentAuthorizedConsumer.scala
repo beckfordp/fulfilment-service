@@ -5,6 +5,7 @@ import cats.syntax.all._
 import fs2.Stream
 import fs2.kafka._
 import io.circe.parser.decode
+import fulfilmentservice.domain.OrderId
 import org.typelevel.log4cats.StructuredLogger
 import purekafka.consumer.DeadLetter
 
@@ -41,22 +42,29 @@ object PaymentAuthorizedConsumer {
       .records
       .evalMap { committable =>
         def handleEvent(event: PaymentAuthorizedEvent): F[Unit] =
-          orders.get(event.orderId).flatMap {
-            case None =>
-              logger.warn(Map("order_id" -> event.orderId))(
-                "PaymentAuthorized for an unknown order - skipping"
-              )
-            case Some((items, address)) =>
-              store
-                .createTask(event.orderId, items, address)
-                .flatMap(task =>
-                  logger.info(
-                    Map(
-                      "order_id" -> event.orderId,
-                      "state" -> task.state.wire
+          OrderId.parse(event.orderId) match {
+            case Left(error) =>
+              logger.error(
+                Map("order_id" -> event.orderId, "error" -> error)
+              )("Invalid orderId in PaymentAuthorized payload")
+            case Right(orderId) =>
+              orders.get(orderId).flatMap {
+                case None =>
+                  logger.warn(
+                    Map("order_id" -> OrderId.render(orderId))
+                  )("PaymentAuthorized for an unknown order - skipping")
+                case Some((items, address)) =>
+                  store
+                    .createTask(orderId, items, address)
+                    .flatMap(task =>
+                      logger.info(
+                        Map(
+                          "order_id" -> OrderId.render(orderId),
+                          "state" -> task.state.wire
+                        )
+                      )("Fulfilment task ready")
                     )
-                  )("Fulfilment task ready")
-                )
+              }
           }
 
         val key = committable.record.key.getOrElse("")
@@ -72,17 +80,25 @@ object PaymentAuthorizedConsumer {
             decode[EventEnvelope](raw) match {
               case Left(error) =>
                 logger
-                  .error(Map("raw" -> raw), error)(
+                  .error(
+                    Map("topic" -> topic, "bytes" -> raw.length.toString),
+                    error
+                  )(
                     "Failed to decode payment-events envelope"
                   )
                   .as(())
               case Right(envelope) if envelope.eventType != eventType =>
-                Async[F].unit
+                logger.info(
+                  Map("topic" -> topic, "event_type" -> envelope.eventType)
+                )("Ignoring unrelated payment-events event type")
               case Right(envelope) =>
                 envelope.payload.as[PaymentAuthorizedEvent] match {
                   case Left(error) =>
                     logger
-                      .error(Map("raw" -> raw), error)(
+                      .error(
+                        Map("topic" -> topic, "bytes" -> raw.length.toString),
+                        error
+                      )(
                         "Failed to decode PaymentAuthorized payload"
                       )
                       .as(())

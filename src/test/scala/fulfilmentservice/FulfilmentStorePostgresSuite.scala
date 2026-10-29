@@ -3,7 +3,10 @@ package fulfilmentservice
 import cats.effect.IO
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.dimafeng.testcontainers.munit.TestContainerForAll
+import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
+
+import java.util.UUID
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
 
@@ -56,7 +59,7 @@ class FulfilmentStorePostgresSuite
       } finally conn.close()
     }
 
-  private def id(): String = java.util.UUID.randomUUID().toString
+  private def id(): OrderId = OrderId.fromUuid(UUID.randomUUID())
 
   test("createTask is idempotent and persists the snapshot") {
     withContainers { postgres =>

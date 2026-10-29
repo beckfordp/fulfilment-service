@@ -1,12 +1,17 @@
 package fulfilmentservice
 
 import cats.effect.IO
+import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
+
+import java.util.UUID
 import org.http4s.{HttpApp, Response, Status, Uri}
 import org.http4s.dsl.io._
 import org.http4s.client.Client
 
 class OrderClientSuite extends CatsEffectSuite {
+
+  private val orderId = OrderId.fromUuid(UUID.randomUUID())
 
   private val base = Uri.unsafeFromString("http://order.test")
 
@@ -21,12 +26,14 @@ class OrderClientSuite extends CatsEffectSuite {
 
   test("GET /orders/{id} returns the item + address snapshot") {
     val app = HttpApp[IO] { request =>
-      if (request.uri.path.renderString == "/orders/order-1")
+      if (
+        request.uri.path.renderString == s"/orders/${OrderId.render(orderId)}"
+      )
         IO.pure(Response[IO](Status.Ok).withEntity(body))
       else IO.pure(Response[IO](Status.NotFound))
     }
 
-    client(app).get("order-1").map { result =>
+    client(app).get(orderId).map { result =>
       assertEquals(
         result.map(_._1),
         Some(List(FulfilmentItem("sku-1", "Watch", 2, 1000)))
@@ -38,13 +45,15 @@ class OrderClientSuite extends CatsEffectSuite {
   test("a 404 becomes None") {
     val app = HttpApp[IO](_ => IO.pure(Response[IO](Status.NotFound)))
 
-    client(app).get("missing").map(result => assertEquals(result, None))
+    client(app)
+      .get(OrderId.fromUuid(UUID.randomUUID()))
+      .map(result => assertEquals(result, None))
   }
 
   test("a transient error raises") {
     val app = HttpApp[IO](_ => IO.pure(Response[IO](Status.ServiceUnavailable)))
 
-    client(app).get("order-1").attempt.map { result =>
+    client(app).get(orderId).attempt.map { result =>
       assert(result.isLeft)
     }
   }

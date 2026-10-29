@@ -15,11 +15,11 @@ import purekafka.resilience.{
 
 /** This template's reference service doesn't publish to Kafka directly, so
   * `purekafka`'s retry + circuit-breaker middleware isn't wired into `Main`.
-  * When you adapt this template to call a Kafka producer directly (not via
-  * the outbox-CDC pattern — see `OutboxExampleSuite`), wrap the publish call
-  * with `Resilience.middleware` before sending, as shown here — this test
-  * exercises that exact pattern against a dummy publish function, so it
-  * stays correct as `purekafka` evolves. See `docs/examples.md`.
+  * When you adapt this template to call a Kafka producer directly (not via the
+  * outbox-CDC pattern — see `OutboxExampleSuite`), wrap the publish call with
+  * `Resilience.middleware` before sending, as shown here — this test exercises
+  * that exact pattern against a dummy publish function, so it stays correct as
+  * `purekafka` evolves. See `docs/examples.md`.
   */
 class KafkaProducerResilienceExampleSuite extends CatsEffectSuite {
 

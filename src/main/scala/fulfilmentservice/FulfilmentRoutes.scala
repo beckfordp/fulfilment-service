@@ -3,6 +3,7 @@ package fulfilmentservice
 import cats.effect.Async
 import cats.syntax.all._
 import io.circe.Codec
+import fulfilmentservice.domain.OrderId
 import io.circe.generic.semiauto.deriveCodec
 import org.http4s.HttpRoutes
 import org.typelevel.log4cats.StructuredLogger
@@ -32,7 +33,7 @@ object TaskResponse {
 
   def apply(task: FulfilmentTask): TaskResponse =
     TaskResponse(
-      task.orderId,
+      OrderId.render(task.orderId),
       task.state.wire,
       task.items,
       task.shippingAddress,
@@ -124,44 +125,44 @@ object FulfilmentRoutes {
 
   private def actionEndpoint(
       action: String
-  ): PublicEndpoint[String, FulfilmentFailure, TaskResponse, Any] =
+  ): PublicEndpoint[OrderId, FulfilmentFailure, TaskResponse, Any] =
     endpoint.post
-      .in("fulfilment-tasks" / path[String]("orderId") / action)
+      .in("fulfilment-tasks" / path[OrderId]("orderId") / action)
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
   private val dispatchEndpoint: PublicEndpoint[
-    (String, DispatchRequest),
+    (OrderId, DispatchRequest),
     FulfilmentFailure,
     TaskResponse,
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[String]("orderId") / "dispatch")
+      .in("fulfilment-tasks" / path[OrderId]("orderId") / "dispatch")
       .in(jsonBody[DispatchRequest])
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
   private val failEndpoint: PublicEndpoint[
-    (String, FailRequest),
+    (OrderId, FailRequest),
     FulfilmentFailure,
     TaskResponse,
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[String]("orderId") / "fail")
+      .in("fulfilment-tasks" / path[OrderId]("orderId") / "fail")
       .in(jsonBody[FailRequest])
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
   private val simulateEndpoint: PublicEndpoint[
-    (String, SimulateRequest),
+    (OrderId, SimulateRequest),
     FulfilmentFailure,
     TaskResponse,
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[String]("orderId") / "simulate-next")
+      .in("fulfilment-tasks" / path[OrderId]("orderId") / "simulate-next")
       .in(jsonBody[SimulateRequest])
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
@@ -209,23 +210,27 @@ object FulfilmentRoutes {
 
     val startPicking = actionEndpoint("start-picking").serverLogic[F] {
       orderId =>
-        store.startPicking(orderId).flatMap(respond(Map("order_id" -> orderId)))
+        store
+          .startPicking(orderId)
+          .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
     }
 
     val pack = actionEndpoint("pack").serverLogic[F] { orderId =>
-      store.pack(orderId).flatMap(respond(Map("order_id" -> orderId)))
+      store
+        .pack(orderId)
+        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
     }
 
     val dispatch = dispatchEndpoint.serverLogic[F] { case (orderId, request) =>
       store
         .dispatch(orderId, request.trackingNo, request.carrier)
-        .flatMap(respond(Map("order_id" -> orderId)))
+        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
     }
 
     val fail = failEndpoint.serverLogic[F] { case (orderId, request) =>
       store
         .fail(orderId, request.reason)
-        .flatMap(respond(Map("order_id" -> orderId)))
+        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
     }
 
     val simulate = simulateEndpoint.serverLogic[F] { case (orderId, request) =>
@@ -255,7 +260,10 @@ object FulfilmentRoutes {
               }
           outcome.flatMap(
             respond(
-              Map("order_id" -> orderId, "simulated" -> "true")
+              Map(
+                "order_id" -> OrderId.render(orderId),
+                "simulated" -> "true"
+              )
             )
           )
       }

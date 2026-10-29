@@ -4,6 +4,7 @@ import cats.effect.{Async, Ref, Resource, Sync}
 import cats.effect.std.Console
 import cats.syntax.all._
 import fs2.io.net.Network
+import fulfilmentservice.domain.OrderId
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
@@ -23,29 +24,29 @@ trait FulfilmentStore[F[_]] {
     * existing task unchanged.
     */
   def createTask(
-      orderId: String,
+      orderId: OrderId,
       items: List[FulfilmentItem],
       shippingAddress: Address
   ): F[FulfilmentTask]
 
-  def get(orderId: String): F[Option[FulfilmentTask]]
+  def get(orderId: OrderId): F[Option[FulfilmentTask]]
 
   def list(state: Option[FulfilmentState]): F[List[FulfilmentTask]]
 
   def startPicking(
-      orderId: String
+      orderId: OrderId
   ): F[Either[FulfilmentFailure, FulfilmentTask]]
 
-  def pack(orderId: String): F[Either[FulfilmentFailure, FulfilmentTask]]
+  def pack(orderId: OrderId): F[Either[FulfilmentFailure, FulfilmentTask]]
 
   def dispatch(
-      orderId: String,
+      orderId: OrderId,
       trackingNo: String,
       carrier: String
   ): F[Either[FulfilmentFailure, FulfilmentTask]]
 
   def fail(
-      orderId: String,
+      orderId: OrderId,
       reason: String
   ): F[Either[FulfilmentFailure, FulfilmentTask]]
 }
@@ -70,11 +71,11 @@ object FulfilmentStore {
   def inMemoryWithOutbox[F[_]: Sync]
       : F[(FulfilmentStore[F], Ref[F, List[(String, EventEnvelope)]])] =
     for {
-      tasks <- Ref.of[F, Map[String, FulfilmentTask]](Map.empty)
+      tasks <- Ref.of[F, Map[OrderId, FulfilmentTask]](Map.empty)
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
     } yield {
       def transition(
-          orderId: String,
+          orderId: OrderId,
           update: FulfilmentTask => Either[FulfilmentFailure, FulfilmentTask],
           event: FulfilmentTask => F[Option[EventEnvelope]]
       ): F[Either[FulfilmentFailure, FulfilmentTask]] =
@@ -95,7 +96,7 @@ object FulfilmentStore {
               event(updated).flatMap {
                 case Some(envelope) =>
                   outbox
-                    .update(_ :+ (orderId -> envelope))
+                    .update(_ :+ (OrderId.render(orderId) -> envelope))
                     .as(Right(updated))
                 case None => Sync[F].pure(Right(updated))
               }
@@ -106,7 +107,7 @@ object FulfilmentStore {
         def ping: F[Boolean] = Sync[F].pure(true)
 
         def createTask(
-            orderId: String,
+            orderId: OrderId,
             items: List[FulfilmentItem],
             shippingAddress: Address
         ): F[FulfilmentTask] =
@@ -130,7 +131,7 @@ object FulfilmentStore {
             }
           }
 
-        def get(orderId: String): F[Option[FulfilmentTask]] =
+        def get(orderId: OrderId): F[Option[FulfilmentTask]] =
           tasks.get.map(_.get(orderId))
 
         def list(state: Option[FulfilmentState]): F[List[FulfilmentTask]] =
@@ -141,7 +142,7 @@ object FulfilmentStore {
           )
 
         def startPicking(
-            orderId: String
+            orderId: OrderId
         ): F[Either[FulfilmentFailure, FulfilmentTask]] =
           transition(
             orderId,
@@ -158,7 +159,7 @@ object FulfilmentStore {
           )
 
         def pack(
-            orderId: String
+            orderId: OrderId
         ): F[Either[FulfilmentFailure, FulfilmentTask]] =
           transition(
             orderId,
@@ -175,7 +176,7 @@ object FulfilmentStore {
           )
 
         def dispatch(
-            orderId: String,
+            orderId: OrderId,
             trackingNo: String,
             carrier: String
         ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
@@ -211,7 +212,7 @@ object FulfilmentStore {
         }
 
         def fail(
-            orderId: String,
+            orderId: OrderId,
             reason: String
         ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
           val failureReason = reason.trim
@@ -340,7 +341,7 @@ object FulfilmentStore {
       updatedAt
     ) = row
     FulfilmentTask(
-      orderId.toString,
+      OrderId.fromUuid(orderId),
       state,
       items,
       address,
@@ -397,14 +398,14 @@ object FulfilmentStore {
                   .map(_.isRight)
 
               def createTask(
-                  orderId: String,
+                  orderId: OrderId,
                   items: List[FulfilmentItem],
                   shippingAddress: Address
               ): F[FulfilmentTask] =
                 timed("insert") {
                   pool.use { session =>
                     for {
-                      id <- Sync[F].delay(UUID.fromString(orderId))
+                      id = OrderId.uuid(orderId)
                       inserted <- session
                         .prepare(insertTask)
                         .flatMap(_.option((id, items, shippingAddress)))
@@ -420,16 +421,14 @@ object FulfilmentStore {
                   }
                 }
 
-              def get(orderId: String): F[Option[FulfilmentTask]] =
-                scala.util.Try(UUID.fromString(orderId)).toOption match {
-                  case None     => Sync[F].pure(None)
-                  case Some(id) =>
-                    timed("select") {
-                      pool.use { session =>
-                        session.prepare(selectTask).flatMap(_.option(id))
-                      }
-                    }.map(_.map(toTask))
-                }
+              def get(orderId: OrderId): F[Option[FulfilmentTask]] =
+                timed("select") {
+                  pool.use { session =>
+                    session
+                      .prepare(selectTask)
+                      .flatMap(_.option(OrderId.uuid(orderId)))
+                  }
+                }.map(_.map(toTask))
 
               def list(
                   state: Option[FulfilmentState]
@@ -445,78 +444,76 @@ object FulfilmentStore {
                 )
 
               private def transition(
-                  orderId: String,
+                  orderId: OrderId,
                   update: FulfilmentTask => Either[
                     FulfilmentFailure,
                     FulfilmentTask
                   ],
                   event: FulfilmentTask => F[Option[EventEnvelope]]
-              ): F[Either[FulfilmentFailure, FulfilmentTask]] =
-                scala.util.Try(UUID.fromString(orderId)).toOption match {
-                  case None => Sync[F].pure(Left(FulfilmentFailure.NotFound))
-                  case Some(id) =>
-                    timed("update") {
-                      pool.use { session =>
-                        session.transaction.use { _ =>
-                          session
-                            .prepare(selectTaskForUpdate)
-                            .flatMap(_.option(id))
-                            .flatMap {
-                              case None =>
-                                Sync[F].pure(
-                                  Left(FulfilmentFailure.NotFound)
-                                )
-                              case Some(row) =>
-                                val current = toTask(row)
-                                update(current) match {
-                                  case Left(error) =>
-                                    Sync[F].pure(Left(error))
-                                  case Right(next) =>
-                                    for {
-                                      updated <- session
-                                        .prepare(updateTaskState)
-                                        .flatMap(
-                                          _.unique(
-                                            (
-                                              next.state,
-                                              next.trackingNo,
-                                              next.carrier,
-                                              next.failureReason,
-                                              id
-                                            )
-                                          )
+              ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+                val id = OrderId.uuid(orderId)
+                timed("update") {
+                  pool.use { session =>
+                    session.transaction.use { _ =>
+                      session
+                        .prepare(selectTaskForUpdate)
+                        .flatMap(_.option(id))
+                        .flatMap {
+                          case None =>
+                            Sync[F].pure(
+                              Left(FulfilmentFailure.NotFound)
+                            )
+                          case Some(row) =>
+                            val current = toTask(row)
+                            update(current) match {
+                              case Left(error) =>
+                                Sync[F].pure(Left(error))
+                              case Right(next) =>
+                                for {
+                                  updated <- session
+                                    .prepare(updateTaskState)
+                                    .flatMap(
+                                      _.unique(
+                                        (
+                                          next.state,
+                                          next.trackingNo,
+                                          next.carrier,
+                                          next.failureReason,
+                                          id
                                         )
-                                        .map(toTask)
-                                      _ <- event(updated).flatMap {
-                                        case None           => Sync[F].unit
-                                        case Some(envelope) =>
-                                          Sync[F]
-                                            .delay(UUID.randomUUID())
-                                            .flatMap { outboxId =>
-                                              session
-                                                .prepare(insertOutboxEvent)
-                                                .flatMap(
-                                                  _.execute(
-                                                    (
-                                                      outboxId,
-                                                      orderId,
-                                                      envelope,
-                                                      envelope.correlationId
-                                                    )
-                                                  ).void
+                                      )
+                                    )
+                                    .map(toTask)
+                                  _ <- event(updated).flatMap {
+                                    case None           => Sync[F].unit
+                                    case Some(envelope) =>
+                                      Sync[F]
+                                        .delay(UUID.randomUUID())
+                                        .flatMap { outboxId =>
+                                          session
+                                            .prepare(insertOutboxEvent)
+                                            .flatMap(
+                                              _.execute(
+                                                (
+                                                  outboxId,
+                                                  OrderId.render(orderId),
+                                                  envelope,
+                                                  envelope.correlationId
                                                 )
-                                            }
-                                      }
-                                    } yield Right(updated)
-                                }
+                                              ).void
+                                            )
+                                        }
+                                  }
+                                } yield Right(updated)
                             }
                         }
-                      }
                     }
+                  }
                 }
+              }
 
               def startPicking(
-                  orderId: String
+                  orderId: OrderId
               ): F[Either[FulfilmentFailure, FulfilmentTask]] =
                 transition(
                   orderId,
@@ -528,7 +525,7 @@ object FulfilmentStore {
                 )
 
               def pack(
-                  orderId: String
+                  orderId: OrderId
               ): F[Either[FulfilmentFailure, FulfilmentTask]] =
                 transition(
                   orderId,
@@ -540,7 +537,7 @@ object FulfilmentStore {
                 )
 
               def dispatch(
-                  orderId: String,
+                  orderId: OrderId,
                   trackingNo: String,
                   carrier: String
               ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
@@ -575,7 +572,7 @@ object FulfilmentStore {
               }
 
               def fail(
-                  orderId: String,
+                  orderId: OrderId,
                   reason: String
               ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
                 val failureReason = reason.trim

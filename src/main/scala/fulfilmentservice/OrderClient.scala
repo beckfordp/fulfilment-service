@@ -3,6 +3,7 @@ package fulfilmentservice
 import cats.effect.Async
 import cats.syntax.all._
 import io.circe.Codec
+import fulfilmentservice.domain.OrderId
 import io.circe.generic.semiauto.deriveCodec
 import org.http4s.circe.CirceEntityDecoder._
 import org.http4s.client.Client
@@ -11,7 +12,7 @@ import purerest.resilience.Resilience
 
 /** Snapshot taken from order-service when a PaymentAuthorized event arrives. */
 trait OrderClient[F[_]] {
-  def get(orderId: String): F[Option[(List[FulfilmentItem], Address)]]
+  def get(orderId: OrderId): F[Option[(List[FulfilmentItem], Address)]]
 }
 
 object OrderClient {
@@ -47,7 +48,7 @@ object OrderClient {
       Resilience.middleware[F](config.resilience)(telemetry.logger)(
         telemetry.meter
       )(httpClient),
-      Uri.unsafeFromString(config.baseUrl)
+      config.baseUrl
     )
 
   def apply[F[_]: Async](
@@ -56,10 +57,13 @@ object OrderClient {
   ): OrderClient[F] =
     new OrderClient[F] {
       def get(
-          orderId: String
+          orderId: OrderId
       ): F[Option[(List[FulfilmentItem], Address)]] =
-        client.run(Request[F](Method.GET, baseUri / "orders" / orderId)).use {
-          response =>
+        client
+          .run(
+            Request[F](Method.GET, baseUri / "orders" / OrderId.render(orderId))
+          )
+          .use { response =>
             response.status match {
               case Status.Ok =>
                 response.as[OrderBody].map { body =>
@@ -85,6 +89,6 @@ object OrderClient {
                   )
                 )
             }
-        }
+          }
     }
 }

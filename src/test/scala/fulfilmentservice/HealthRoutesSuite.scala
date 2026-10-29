@@ -1,6 +1,7 @@
 package fulfilmentservice
 
 import cats.effect.IO
+import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
 import org.http4s.implicits._
 import org.http4s.{Method, Request, Status}
@@ -11,30 +12,30 @@ class HealthRoutesSuite extends CatsEffectSuite {
     new FulfilmentStore[IO] {
       def ping: IO[Boolean] = IO.pure(ready)
       def createTask(
-          orderId: String,
+          orderId: OrderId,
           items: List[FulfilmentItem],
           shippingAddress: Address
       ): IO[FulfilmentTask] = IO.raiseError(new NotImplementedError())
-      def get(orderId: String): IO[Option[FulfilmentTask]] = IO.pure(None)
+      def get(orderId: OrderId): IO[Option[FulfilmentTask]] = IO.pure(None)
       def list(
           state: Option[FulfilmentState]
       ): IO[List[FulfilmentTask]] = IO.pure(Nil)
       def startPicking(
-          orderId: String
+          orderId: OrderId
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())
       def pack(
-          orderId: String
+          orderId: OrderId
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())
       def dispatch(
-          orderId: String,
+          orderId: OrderId,
           trackingNo: String,
           carrier: String
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())
       def fail(
-          orderId: String,
+          orderId: OrderId,
           reason: String
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())

@@ -6,7 +6,11 @@ import munit.CatsEffectSuite
 import org.typelevel.log4cats.noop.NoOpLogger
 import org.typelevel.otel4s.metrics.Meter
 import purekafka.consumer.{DeadLetter, StreamSupervisor, StreamSupervisorConfig}
-import purekafka.resilience.{CircuitBreakerConfig, ResilienceConfig, RetryConfig}
+import purekafka.resilience.{
+  CircuitBreakerConfig,
+  ResilienceConfig,
+  RetryConfig
+}
 
 import scala.concurrent.duration._
 
@@ -15,12 +19,11 @@ import scala.concurrent.duration._
   * adapt this template to consume a Kafka topic, wrap the raw
   * `consumer.stream.evalMap(processRecord)` pipeline in `StreamSupervisor`
   * (restart-with-backoff if the whole stream dies, e.g. a broker disconnect)
-  * and guard each message's processing with `DeadLetter` (bounded retry,
-  * then route to `<topic>-dlq` instead of killing the stream for one poison
-  * message) - as shown here, against synthetic messages rather than a real
-  * Kafka broker. See `docs/examples.md`, and order-service's
-  * `KafkaConsumers.scala` for the fuller, real-topic version of this same
-  * composition.
+  * and guard each message's processing with `DeadLetter` (bounded retry, then
+  * route to `<topic>-dlq` instead of killing the stream for one poison message) -
+  * as shown here, against synthetic messages rather than a real Kafka broker.
+  * See `docs/examples.md`, and order-service's `KafkaConsumers.scala` for the
+  * fuller, real-topic version of this same composition.
   */
 class KafkaConsumerExampleSuite extends CatsEffectSuite {
 
@@ -92,7 +95,8 @@ class KafkaConsumerExampleSuite extends CatsEffectSuite {
             Stream.raiseError[IO](
               new RuntimeException(s"simulated broker blip, attempt $attempt")
             )
-          else Stream.eval(deadLetter.guard("example-topic", "key", "ok")(IO.unit))
+          else
+            Stream.eval(deadLetter.guard("example-topic", "key", "ok")(IO.unit))
       }
       _ <- StreamSupervisor
         .supervise[IO, Unit](supervisorConfig)(NoOpLogger[IO])(Meter.noop[IO])(

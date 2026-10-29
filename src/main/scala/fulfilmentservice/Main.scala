@@ -5,7 +5,6 @@ import com.comcast.ip4s._
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
 
-
 /** Acquires every dependency this service needs, delegates route assembly to
   * `AppRoutes.all`, and serves the result — a single flat `Resource`
   * for-comprehension, one `<-` per dependency. Every dependency that isn't
@@ -56,7 +55,8 @@ object Main extends IOApp.Simple {
       store,
       telemetry,
       config.simulation.enabled,
-      AsyncApiChannels.channels
+      AsyncApiChannels.channels,
+      config.asyncApiHtmlDir
     )
     _ <- EmberServerBuilder
       .default[IO]

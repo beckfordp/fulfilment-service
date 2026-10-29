@@ -4,6 +4,7 @@ import cats.effect.Sync
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
+import fulfilmentservice.domain.OrderId
 import io.circe.syntax._
 import sttp.tapir.Schema
 
@@ -82,23 +83,27 @@ object FulfilmentEvents {
     )
 
   def dispatchConfirmed[F[_]: Sync](
-      orderId: String,
+      orderId: OrderId,
       trackingNo: String,
       items: List[FulfilmentItem]
-  ): F[EventEnvelope] =
+  ): F[EventEnvelope] = {
+    val rendered = OrderId.render(orderId)
     envelope[F](
       "DispatchConfirmed",
-      orderId,
-      DispatchConfirmedEvent(orderId, trackingNo, items).asJson
+      rendered,
+      DispatchConfirmedEvent(rendered, trackingNo, items).asJson
     )
+  }
 
   def dispatchFailed[F[_]: Sync](
-      orderId: String,
+      orderId: OrderId,
       reason: String
-  ): F[EventEnvelope] =
+  ): F[EventEnvelope] = {
+    val rendered = OrderId.render(orderId)
     envelope[F](
       "DispatchFailed",
-      orderId,
-      DispatchFailedEvent(orderId, reason).asJson
+      rendered,
+      DispatchFailedEvent(rendered, reason).asJson
     )
+  }
 }

@@ -2,6 +2,7 @@ package fulfilmentservice
 
 import cats.effect.IO
 import munit.CatsEffectSuite
+import org.http4s.Uri
 import pureconfig.ConfigSource
 import purekafka.consumer.StreamSupervisorConfig
 import purekafka.resilience.{
@@ -20,6 +21,7 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       |port = 8080
       |metrics-port = 9090
       |service-name = "fulfilment-service"
+      |async-api-html-dir = "target/asyncapi-docs"
       |postgres {
       |  host = "localhost"
       |  port = 5432
@@ -56,6 +58,7 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
           port = 8080,
           metricsPort = 9090,
           serviceName = "fulfilment-service",
+          asyncApiHtmlDir = "target/asyncapi-docs",
           postgres = PostgresConfig(
             host = "localhost",
             port = 5432,
@@ -64,7 +67,7 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
             password = "fulfilment"
           ),
           orderClient = OrderClientConfig(
-            baseUrl = "http://localhost:8083",
+            baseUrl = Uri.unsafeFromString("http://localhost:8083"),
             resilience = ResilienceConfig(
               retry = RetryConfig(maxRetries = 3, baseDelay = 100.millis),
               circuitBreaker = CircuitBreakerConfig(
@@ -114,6 +117,7 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       assertEquals(config.port, 8080)
       assertEquals(config.metricsPort, 9090)
       assertEquals(config.serviceName, "fulfilment-service")
+      assertEquals(config.asyncApiHtmlDir, "target/asyncapi-docs")
       assertEquals(
         config.postgres,
         PostgresConfig(
@@ -124,7 +128,10 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
           "fulfilment"
         )
       )
-      assertEquals(config.orderClient.baseUrl, "http://localhost:8083")
+      assertEquals(
+        config.orderClient.baseUrl,
+        Uri.unsafeFromString("http://localhost:8083")
+      )
       assertEquals(config.simulation, SimulationConfig(enabled = false))
       assertEquals(config.kafka.bootstrapServers, "localhost:9092")
     }
