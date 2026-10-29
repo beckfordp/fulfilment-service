@@ -1,5 +1,6 @@
 package fulfilmentservice
 
+import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.all._
 import io.circe.Codec
@@ -170,7 +171,7 @@ object FulfilmentRoutes {
   private def generatedTrackingNo(): String =
     s"GLN-${UUID.randomUUID().toString.take(8).toUpperCase}"
 
-  def serverEndpoints[F[_]: Async](
+  def serverEndpoints[F[_]: MonadThrow](
       store: FulfilmentStore[F],
       simulationEnabled: Boolean,
       logger: StructuredLogger[F]
@@ -202,7 +203,7 @@ object FulfilmentRoutes {
             .map(Some(_))
       }
       parsed match {
-        case Left(error)  => Async[F].pure(Left(error))
+        case Left(error)  => MonadThrow[F].pure(Left(error))
         case Right(state) =>
           store.list(state).map(tasks => Right(tasks.map(TaskResponse(_))))
       }
@@ -235,7 +236,7 @@ object FulfilmentRoutes {
 
     val simulate = simulateEndpoint.serverLogic[F] { case (orderId, request) =>
       store.get(orderId).flatMap {
-        case None       => Async[F].pure(Left(FulfilmentFailure.NotFound))
+        case None       => MonadThrow[F].pure(Left(FulfilmentFailure.NotFound))
         case Some(task) =>
           val outcome: F[Either[FulfilmentFailure, FulfilmentTask]] =
             if (request.forceFailure.getOrElse(false))
@@ -250,7 +251,7 @@ object FulfilmentRoutes {
                 case FulfilmentState.Packed  =>
                   store.dispatch(orderId, generatedTrackingNo(), "DHL Express")
                 case _ =>
-                  Async[F].pure(
+                  MonadThrow[F].pure(
                     Left(
                       FulfilmentFailure.InvalidTransition(
                         s"Order $orderId is already ${task.state.wire}"
