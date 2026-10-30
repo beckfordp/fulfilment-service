@@ -8,6 +8,7 @@ import fulfilmentservice.domain.OrderId
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
+import purerest.metrics.LatencyBuckets
 import skunk.Session
 import skunk.circe.codec.all.jsonb
 import skunk.codec.all._
@@ -370,6 +371,7 @@ object FulfilmentStore {
         meter
           .histogram[Double]("db.client.operation.duration")
           .withUnit("s")
+          .withExplicitBucketBoundaries(LatencyBuckets.seconds)
           .create
           .map { histogram =>
             def timed[A](operation: String)(fa: F[A]): F[A] =
