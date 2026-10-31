@@ -14,13 +14,19 @@
 - tapir 1.11.25 — operator endpoints + Swagger/OpenAPI docs (`/docs`)
 - purekafka.docs — AsyncAPI docs for consumed/produced events; schemaRegistryCheck
   against Apicurio at build/CI time (ADR 0003)
+- Schema registry baseline (gluon TD-18, purekafka 0.5.0 / sbt-purekafka-docs
+  0.5.0-dev): only producer channels register (draft-07, closed, labelled
+  `producer=<service>`, `BACKWARD_TRANSITIVE`); subscribe channels dry-run
+  their mirror. CI restores gluon's `registry/` git export into the throwaway
+  Apicurio first, so the check compares against the real baseline;
+  `scripts/verify-schema-registry-check.sh` does the same locally.
 
 ## Persistence
 - skunk 1.0.0 + skunk-circe (JSONB task snapshot/outbox payload)
 - Flyway 11.8.2; PostgreSQL 16, database `fulfilment`
 
 ## Messaging
-- fs2-kafka 3.6.0 + purekafka 0.3.0 — `PaymentAuthorizedConsumer` (null-safe,
+- fs2-kafka 3.6.0 + purekafka 0.5.0 — `PaymentAuthorizedConsumer` (null-safe,
   envelope/eventType filtered, StreamSupervisor + DeadLetter, group
   `fulfilment-service-payment-events`); transactional outbox + Debezium for
   `DispatchConfirmed`/`DispatchFailed`
