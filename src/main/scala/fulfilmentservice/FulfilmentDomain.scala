@@ -4,13 +4,22 @@ import fulfilmentservice.domain.OrderId
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 import sttp.tapir.Schema
+import sttp.tapir.Schema.annotations.{description, encodedExample}
 
 import java.time.Instant
 
 final case class FulfilmentItem(
+    @description("Product SKU.")
+    @encodedExample("SKU-0042")
     sku: String,
+    @description("Product name at dispatch time.")
+    @encodedExample("Espresso cup")
     productName: String,
+    @description("Units dispatched.")
+    @encodedExample(2)
     quantity: Int,
+    @description("Unit price, in cents.")
+    @encodedExample(1250)
     unitPriceCents: Int
 )
 
