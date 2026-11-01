@@ -28,6 +28,9 @@ object EventEnvelope {
 
 /** `DispatchConfirmed` payload (US-17.3): a full item snapshot, so consumers
   * need no order lookup.
+  *
+  * Descriptions/examples are copied from the producer's artifact in gluon's
+  * `registry/` (TD-19); nothing checks they stay current.
   */
 @description(
   "Order dispatched: pick/pack/dispatch succeeded. Carries a full item snapshot so consumers need no order lookup."
