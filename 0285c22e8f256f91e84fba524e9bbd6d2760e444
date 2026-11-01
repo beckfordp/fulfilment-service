@@ -1,0 +1,1 @@
+Phase 3 verification: sbt scalafmtCheckAll scalafmtSbtCheck test -> 70 passed, 0 failed. Manual verification covered by PaymentAuthorizedHandlerSuite (broker-free handler tests); prompting off.
