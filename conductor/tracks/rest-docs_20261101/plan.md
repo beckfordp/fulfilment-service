@@ -27,3 +27,6 @@ suite is 70/70, `scalafmtCheckAll` is clean, and
 `scripts/verify-rest-docs.sh` passes 72 served-spec checks (it starts the
 service with `FULFILMENT_SIMULATION_ENABLED=true` so `simulate-next` is in
 the spec).
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions a944cef
