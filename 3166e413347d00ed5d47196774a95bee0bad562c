@@ -1,0 +1,1 @@
+Phase 2 verification: sbt scalafmtCheckAll scalafmtSbtCheck test -> 64 passed, 0 failed. Manual verification covered by the suite (TestControl/fixed-UUIDGen tests prove effect capture); prompting off.
