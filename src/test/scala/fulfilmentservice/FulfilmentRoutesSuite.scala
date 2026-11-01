@@ -4,6 +4,7 @@ import fulfilmentservice.StoreCommands._
 
 import cats.effect.IO
 import fulfilmentservice.domain.OrderId
+import cats.effect.std.UUIDGen
 import munit.CatsEffectSuite
 
 import java.util.UUID
@@ -245,5 +246,29 @@ class FulfilmentRoutesSuite extends CatsEffectSuite {
         Some(json("{}"))
       )
     } yield assertEquals(response.status, Status.Conflict)
+  }
+
+  test("simulate-next mints its tracking number from UUIDGen[F]") {
+    given UUIDGen[IO] = new UUIDGen[IO] {
+      def randomUUID: IO[UUID] =
+        IO.pure(UUID.fromString("abcdef12-0000-4000-8000-000000000000"))
+    }
+    for {
+      f <- fixture
+      _ <- f.seed("order-1")
+      _ <- f.store.startPicking(f.id("order-1"))
+      _ <- f.store.pack(f.id("order-1"))
+      routes = FulfilmentRoutes.routes[IO](f.store, true, NoOpLogger[IO])
+      response <- f.run(
+        routes,
+        Method.POST,
+        f.path("order-1", "simulate-next"),
+        Some(json("{}"))
+      )
+      body <- response.as[TaskResponse]
+    } yield {
+      assertEquals(body.trackingNo, Some("GLN-ABCDEF12"))
+      assertEquals(body.carrier, Some("DHL Express"))
+    }
   }
 }

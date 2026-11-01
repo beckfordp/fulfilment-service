@@ -5,7 +5,10 @@ import fulfilmentservice.StoreCommands._
 
 import cats.effect.IO
 import fulfilmentservice.domain.OrderId
+import cats.effect.testkit.TestControl
 import munit.CatsEffectSuite
+
+import java.time.Instant
 
 import java.util.UUID
 
@@ -147,5 +150,19 @@ class FulfilmentStoreSuite extends CatsEffectSuite {
         assertEquals(picking.map(_.orderId), List(otherOrderId))
       }
     }
+  }
+
+  test("timestamps come from Clock[F], not the wall clock") {
+    TestControl.executeEmbed(
+      for {
+        store <- FulfilmentStore.inMemory[IO]
+        created <- store.createTask(orderId, List(item), address)
+        picked <- store.startPicking(orderId)
+      } yield {
+        assertEquals(created.createdAt, Instant.EPOCH)
+        assertEquals(created.updatedAt, Instant.EPOCH)
+        assertEquals(picked.map(_.updatedAt), Right(Instant.EPOCH))
+      }
+    )
   }
 }

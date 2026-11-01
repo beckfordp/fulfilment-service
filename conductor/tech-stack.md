@@ -40,7 +40,8 @@
   (local values true)
 
 ## Testing
-- munit 1.3.6 + munit-cats-effect 2.2.1, log4cats-testing, testcontainers
+- munit 1.3.6 + munit-cats-effect 2.2.1, cats-effect-testkit (TestControl, 2026-11-01
+  TD-16.3: deterministic Clock in effect-capture tests), log4cats-testing, testcontainers
   (Postgres + Kafka modules)
 - scalafmt (Scala 3 default) — `sbt scalafmtCheck test` in CI
 

@@ -1,6 +1,6 @@
 package fulfilmentservice
 
-import cats.effect.Async
+import cats.effect.{Async, Concurrent}
 import cats.syntax.all._
 import io.circe.Codec
 import fulfilmentservice.domain.OrderId
@@ -51,7 +51,7 @@ object OrderClient {
       config.baseUrl
     )
 
-  def apply[F[_]: Async](
+  def apply[F[_]: Concurrent](
       client: Client[F],
       baseUri: Uri
   ): OrderClient[F] =
@@ -81,9 +81,9 @@ object OrderClient {
                     )
                   }
                 }
-              case Status.NotFound => Async[F].pure(None)
+              case Status.NotFound => Concurrent[F].pure(None)
               case other           =>
-                Async[F].raiseError(
+                Concurrent[F].raiseError(
                   new RuntimeException(
                     s"order-service GET /orders/$orderId returned ${other.code}"
                   )

@@ -2,6 +2,7 @@ package fulfilmentservice
 
 import cats.MonadThrow
 import cats.effect.Async
+import cats.effect.std.UUIDGen
 import cats.syntax.all._
 import io.circe.Codec
 import fulfilmentservice.domain.{
@@ -20,8 +21,6 @@ import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerInterpreter
-
-import java.util.UUID
 
 final case class TaskResponse(
     orderId: String,
@@ -176,10 +175,10 @@ object FulfilmentRoutes {
 
   private val simulatedCarrier: String = "DHL Express"
 
-  private def generatedTrackingNo(): String =
-    s"GLN-${UUID.randomUUID().toString.take(8).toUpperCase}"
+  private def generatedTrackingNo[F[_]: UUIDGen: cats.Functor]: F[String] =
+    UUIDGen[F].randomUUID.map(id => s"GLN-${id.toString.take(8).toUpperCase}")
 
-  def serverEndpoints[F[_]: MonadThrow](
+  def serverEndpoints[F[_]: MonadThrow: UUIDGen](
       store: FulfilmentStore[F],
       simulationEnabled: Boolean,
       logger: StructuredLogger[F]
@@ -255,25 +254,29 @@ object FulfilmentRoutes {
       store.get(orderId).flatMap {
         case None       => MonadThrow[F].pure(Left(FulfilmentFailure.NotFound))
         case Some(task) =>
-          val command: Either[FulfilmentFailure, FulfilmentCommand] =
+          val command: F[Either[FulfilmentFailure, FulfilmentCommand]] =
             if (request.forceFailure.getOrElse(false))
-              FulfilmentCommand.fail(
-                request.reason.getOrElse("Simulated dispatch failure")
+              MonadThrow[F].pure(
+                FulfilmentCommand.fail(
+                  request.reason.getOrElse("Simulated dispatch failure")
+                )
               )
             else
-              FulfilmentCommand
-                .dispatch(generatedTrackingNo(), simulatedCarrier)
-                .flatMap(dispatch =>
-                  FulfilmentLifecycle
-                    .simulatedNext(task.state, dispatch)
-                    .toRight(
-                      FulfilmentFailure.InvalidTransition(
-                        s"Order ${OrderId.render(orderId)} is already ${task.state.wire}"
+              generatedTrackingNo[F].map(trackingNo =>
+                FulfilmentCommand
+                  .dispatch(trackingNo, simulatedCarrier)
+                  .flatMap(dispatch =>
+                    FulfilmentLifecycle
+                      .simulatedNext(task.state, dispatch)
+                      .toRight(
+                        FulfilmentFailure.InvalidTransition(
+                          s"Order ${OrderId.render(orderId)} is already ${task.state.wire}"
+                        )
                       )
-                    )
-                )
-          run(orderId, orderContext(orderId) + ("simulated" -> "true"))(
-            command
+                  )
+              )
+          command.flatMap(
+            run(orderId, orderContext(orderId) + ("simulated" -> "true"))
           )
       }
     }
@@ -282,7 +285,7 @@ object FulfilmentRoutes {
       (if (simulationEnabled) List(simulate) else Nil)
   }
 
-  def routes[F[_]: Async](
+  def routes[F[_]: Async: UUIDGen](
       store: FulfilmentStore[F],
       simulationEnabled: Boolean,
       logger: StructuredLogger[F]

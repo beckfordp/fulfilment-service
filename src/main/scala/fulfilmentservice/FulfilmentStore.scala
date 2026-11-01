@@ -1,6 +1,7 @@
 package fulfilmentservice
 
-import cats.effect.{Async, Clock, Ref, Resource, Sync}
+import cats.effect.{Async, Clock, Concurrent, Ref, Resource}
+import cats.effect.std.UUIDGen
 import cats.effect.std.Console
 import cats.syntax.all._
 import fs2.io.net.Network
@@ -51,40 +52,42 @@ trait FulfilmentStore[F[_]] {
 
 object FulfilmentStore {
 
-  def inMemory[F[_]: Sync]: F[FulfilmentStore[F]] =
+  /** Test/dev interpreter: `Ref`-backed, timestamps from `Clock[F]`. */
+  def inMemory[F[_]: Concurrent: Clock: UUIDGen]: F[FulfilmentStore[F]] =
     inMemoryWithOutbox[F].map(_._1)
 
-  def inMemoryWithOutbox[F[_]: Sync]
+  def inMemoryWithOutbox[F[_]: Concurrent: Clock: UUIDGen]
       : F[(FulfilmentStore[F], Ref[F, List[(String, EventEnvelope)]])] =
     for {
       tasks <- Ref.of[F, Map[OrderId, FulfilmentTask]](Map.empty)
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
     } yield {
       val store = new FulfilmentStore[F] {
-        def ping: F[Boolean] = Sync[F].pure(true)
+        def ping: F[Boolean] = Concurrent[F].pure(true)
 
         def createTask(
             orderId: OrderId,
             items: List[FulfilmentItem],
             shippingAddress: Address
         ): F[FulfilmentTask] =
-          tasks.modify { current =>
-            current.get(orderId) match {
-              case Some(existing) => (current, existing)
-              case None           =>
-                val now = java.time.Instant.now()
-                val task = FulfilmentTask(
-                  orderId,
-                  FulfilmentState.Pending,
-                  items,
-                  shippingAddress,
-                  None,
-                  None,
-                  None,
-                  now,
-                  now
-                )
-                (current + (orderId -> task), task)
+          Clock[F].realTimeInstant.flatMap { now =>
+            tasks.modify { current =>
+              current.get(orderId) match {
+                case Some(existing) => (current, existing)
+                case None           =>
+                  val task = FulfilmentTask(
+                    orderId,
+                    FulfilmentState.Pending,
+                    items,
+                    shippingAddress,
+                    None,
+                    None,
+                    None,
+                    now,
+                    now
+                  )
+                  (current + (orderId -> task), task)
+              }
             }
           }
 
@@ -124,9 +127,9 @@ object FulfilmentStore {
                         outbox
                           .update(_ :+ (OrderId.render(orderId) -> envelope))
                           .as(Right(updated))
-                      case None => Sync[F].pure(Right(updated))
+                      case None => Concurrent[F].pure(Right(updated))
                     }
-                case Left(error) => Sync[F].pure(Left(error))
+                case Left(error) => Concurrent[F].pure(Left(error))
               }
           }
       }
@@ -303,7 +306,7 @@ object FulfilmentStore {
                         .prepare(insertTask)
                         .flatMap(_.option((id, items, shippingAddress)))
                       task <- inserted match {
-                        case Some(row) => Sync[F].pure(toTask(row))
+                        case Some(row) => Async[F].pure(toTask(row))
                         case None      =>
                           session
                             .prepare(selectTask)
@@ -380,8 +383,7 @@ object FulfilmentStore {
                                   event <- FulfilmentEvents
                                     .forCommand[F](orderId, updated, command)
                                   _ <- event.traverse_ { envelope =>
-                                    Async[F]
-                                      .delay(UUID.randomUUID())
+                                    UUIDGen[F].randomUUID
                                       .flatMap { outboxId =>
                                         session
                                           .prepare(insertOutboxEvent)

@@ -1,6 +1,8 @@
 package fulfilmentservice
 
-import cats.effect.Sync
+import cats.Monad
+import cats.effect.Clock
+import cats.effect.std.UUIDGen
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
@@ -10,7 +12,6 @@ import sttp.tapir.Schema
 import sttp.tapir.Schema.annotations.{description, encodedExample}
 
 import java.time.Instant
-import java.util.UUID
 
 /** Shared Kafka envelope (ADR 0009). */
 final case class EventEnvelope(
@@ -98,14 +99,14 @@ object FulfilmentEvents {
 
   private val source = "fulfilment-service"
 
-  private def envelope[F[_]: Sync](
+  private def envelope[F[_]: Monad: Clock: UUIDGen](
       eventType: String,
       orderId: String,
       payload: io.circe.Json
   ): F[EventEnvelope] =
     for {
-      eventId <- Sync[F].delay(UUID.randomUUID().toString)
-      timestamp <- Sync[F].realTimeInstant
+      eventId <- UUIDGen[F].randomUUID.map(_.toString)
+      timestamp <- Clock[F].realTimeInstant
     } yield EventEnvelope(
       eventId = eventId,
       eventType = eventType,
@@ -115,7 +116,7 @@ object FulfilmentEvents {
       payload = payload
     )
 
-  def dispatchConfirmed[F[_]: Sync](
+  def dispatchConfirmed[F[_]: Monad: Clock: UUIDGen](
       orderId: OrderId,
       trackingNo: String,
       items: List[FulfilmentItem]
@@ -128,7 +129,7 @@ object FulfilmentEvents {
     )
   }
 
-  def dispatchFailed[F[_]: Sync](
+  def dispatchFailed[F[_]: Monad: Clock: UUIDGen](
       orderId: OrderId,
       reason: String
   ): F[EventEnvelope] = {
@@ -144,7 +145,7 @@ object FulfilmentEvents {
     * store interpreters: `Dispatch` -> DispatchConfirmed (item snapshot),
     * `Fail` -> DispatchFailed, picking/packing -> none.
     */
-  def forCommand[F[_]: Sync](
+  def forCommand[F[_]: Monad: Clock: UUIDGen](
       orderId: OrderId,
       task: FulfilmentTask,
       command: FulfilmentCommand
@@ -155,6 +156,6 @@ object FulfilmentEvents {
       case FulfilmentCommand.Fail(reason) =>
         dispatchFailed[F](orderId, reason).map(Some(_))
       case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack =>
-        Sync[F].pure(None)
+        Monad[F].pure(None)
     }
 }
