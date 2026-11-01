@@ -17,21 +17,41 @@ import org.http4s.HttpRoutes
 import org.typelevel.log4cats.StructuredLogger
 import sttp.model.StatusCode
 import sttp.tapir._
+import sttp.tapir.Schema.annotations.{description, encodedExample}
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
+import java.time.Instant
+import java.util.UUID
+
+@description(
+  "A fulfilment task as stored: order snapshot, lifecycle state and dispatch outcome."
+)
 final case class TaskResponse(
+    @description("Order id (UUID) from order-service.")
+    @encodedExample("3f2b8c1e-7a4d-4e9b-9c2a-1d5e6f7a8b90")
     orderId: String,
-    state: String,
+    @description("Lifecycle state.") @encodedExample("PICKING") state: String,
+    @description("Order lines snapshotted when the task was created.")
     items: List[FulfilmentItem],
-    shippingAddress: Address,
+    @description("Where the order ships.") shippingAddress: Address,
+    @description("Carrier tracking number; present once DISPATCHED.")
+    @encodedExample("GLN-1A2B3C4D")
     trackingNo: Option[String],
+    @description("Carrier name; present once DISPATCHED.")
+    @encodedExample("DHL Express")
     carrier: Option[String],
+    @description("Why dispatch failed; present once DISPATCH_FAILED.")
+    @encodedExample("carrier_unavailable")
     failureReason: Option[String],
-    createdAt: java.time.Instant,
-    updatedAt: java.time.Instant
+    @description("When the task was created (UTC).")
+    @encodedExample("2026-10-31T10:15:30Z")
+    createdAt: Instant,
+    @description("When the task last changed (UTC).")
+    @encodedExample("2026-10-31T10:20:00Z")
+    updatedAt: Instant
 )
 
 object TaskResponse {
@@ -51,20 +71,43 @@ object TaskResponse {
     )
 }
 
-final case class DispatchRequest(trackingNo: String, carrier: String)
+@description(
+  "Dispatch details: who is carrying the order and its tracking number."
+)
+final case class DispatchRequest(
+    @description("Carrier tracking number; non-blank.")
+    @encodedExample("GLN-1A2B3C4D")
+    trackingNo: String,
+    @description("Carrier name; non-blank.") @encodedExample("DHL Express")
+    carrier: String
+)
 
 object DispatchRequest {
   implicit val codec: Codec[DispatchRequest] = deriveCodec
 }
 
-final case class FailRequest(reason: String)
+@description("Why the task could not be dispatched.")
+final case class FailRequest(
+    @description("Failure reason; non-blank.")
+    @encodedExample("carrier_unavailable")
+    reason: String
+)
 
 object FailRequest {
   implicit val codec: Codec[FailRequest] = deriveCodec
 }
 
+@description(
+  "Demo simulation options; both optional (send `{}` to advance one step)."
+)
 final case class SimulateRequest(
+    @description("Fail the task instead of advancing it.")
+    @encodedExample(true)
     forceFailure: Option[Boolean] = None,
+    @description(
+      "Failure reason when `forceFailure` is true; defaults to `Simulated dispatch failure`."
+    )
+    @encodedExample("simulated dispatch failure")
     reason: Option[String] = None
 )
 
@@ -72,7 +115,12 @@ object SimulateRequest {
   implicit val codec: Codec[SimulateRequest] = deriveCodec
 }
 
-final case class ErrorResponse(error: String)
+@description("Error body.")
+final case class ErrorResponse(
+    @description("Human-readable reason.")
+    @encodedExample("Fulfilment task not found")
+    error: String
+)
 
 object ErrorResponse {
   implicit val codec: Codec[ErrorResponse] = deriveCodec
@@ -83,13 +131,43 @@ object ErrorResponse {
   */
 object FulfilmentRoutes {
 
+  private val Tag = "fulfilment-tasks"
+
+  private val exampleOrderId: OrderId =
+    OrderId.fromUuid(UUID.fromString("3f2b8c1e-7a4d-4e9b-9c2a-1d5e6f7a8b90"))
+
+  private val exampleAddress: Address =
+    Address("1 High Street", Some("Flat 2"), "London", "SW1A 1AA", "GB")
+
+  private val exampleTask: TaskResponse =
+    TaskResponse(
+      OrderId.render(exampleOrderId),
+      "DISPATCHED",
+      List(FulfilmentItem("SKU-0042", "Espresso cup", 2, 1250)),
+      exampleAddress,
+      Some("GLN-1A2B3C4D"),
+      Some("DHL Express"),
+      None,
+      Instant.parse("2026-10-31T10:15:30Z"),
+      Instant.parse("2026-10-31T10:20:00Z")
+    )
+
+  private val notFoundBody: ErrorResponse =
+    ErrorResponse("Fulfilment task not found")
+
+  private def errorBody(
+      what: String,
+      example: ErrorResponse
+  ): EndpointIO.Body[String, ErrorResponse] =
+    jsonBody[ErrorResponse].description(what).example(example)
+
   private val notFoundVariant
       : EndpointOutput.OneOfVariant[FulfilmentFailure.NotFound.type] =
     oneOfVariant(
       statusCode(StatusCode.NotFound)
-        .and(jsonBody[ErrorResponse])
+        .and(errorBody("No task exists for this order id.", notFoundBody))
         .map[FulfilmentFailure.NotFound.type](_ => FulfilmentFailure.NotFound)(
-          _ => ErrorResponse("Fulfilment task not found")
+          _ => notFoundBody
         )
     )
 
@@ -97,7 +175,14 @@ object FulfilmentRoutes {
       : EndpointOutput.OneOfVariant[FulfilmentFailure.InvalidTransition] =
     oneOfVariant(
       statusCode(StatusCode.Conflict)
-        .and(jsonBody[ErrorResponse])
+        .and(
+          errorBody(
+            "The task can't move from its current state (wrong state for this action, or already terminal).",
+            ErrorResponse(
+              "Cannot transition order 3f2b8c1e-7a4d-4e9b-9c2a-1d5e6f7a8b90 from PENDING"
+            )
+          )
+        )
         .map[FulfilmentFailure.InvalidTransition](e =>
           FulfilmentFailure.InvalidTransition(e.error)
         )(e => ErrorResponse(e.message))
@@ -107,7 +192,12 @@ object FulfilmentRoutes {
       : EndpointOutput.OneOfVariant[FulfilmentFailure.InvalidRequest] =
     oneOfVariant(
       statusCode(StatusCode.BadRequest)
-        .and(jsonBody[ErrorResponse])
+        .and(
+          errorBody(
+            "Invalid request input: an unknown `state` filter, or a blank `trackingNo`/`carrier`/`reason`.",
+            ErrorResponse("Unknown state: SHIPPED")
+          )
+        )
         .map[FulfilmentFailure.InvalidRequest](e =>
           FulfilmentFailure.InvalidRequest(e.error)
         )(e => ErrorResponse(e.message))
@@ -127,22 +217,45 @@ object FulfilmentRoutes {
       invalidRequestVariant
     )
 
+  private val orderIdPath: EndpointInput.PathCapture[OrderId] =
+    path[OrderId]("orderId")
+      .description(
+        "Order id (UUID) the task was created for. A malformed id returns 400."
+      )
+      .example(exampleOrderId)
+
   private val listEndpoint: PublicEndpoint[Option[
     String
   ], FulfilmentFailure, List[TaskResponse], Any] =
     endpoint.get
       .in("fulfilment-tasks")
-      .in(query[Option[String]]("state"))
-      .out(jsonBody[List[TaskResponse]])
+      .in(
+        query[Option[String]]("state")
+          .description(
+            "Filter by lifecycle state: `PENDING`, `PICKING`, `PACKED`, `DISPATCHED` or `DISPATCH_FAILED`."
+          )
+          .example(Some("PENDING"))
+      )
+      .out(jsonBody[List[TaskResponse]].example(List(exampleTask)))
       .errorOut(invalidRequestOutput)
+      .summary("List fulfilment tasks")
+      .description(
+        "Every pick/pack task, oldest first (createdAt). Optional `state` filter; an unknown value is 400. Read directly from Postgres — no cache, so results are always current."
+      )
+      .tag(Tag)
 
   private def actionEndpoint(
-      action: String
+      action: String,
+      summary: String,
+      description: String
   ): PublicEndpoint[OrderId, FulfilmentFailure, TaskResponse, Any] =
     endpoint.post
-      .in("fulfilment-tasks" / path[OrderId]("orderId") / action)
-      .out(jsonBody[TaskResponse])
+      .in("fulfilment-tasks" / orderIdPath / action)
+      .out(jsonBody[TaskResponse].example(exampleTask))
       .errorOut(notFoundOrInvalidTransitionOutput)
+      .summary(summary)
+      .description(description)
+      .tag(Tag)
 
   private val dispatchEndpoint: PublicEndpoint[
     (OrderId, DispatchRequest),
@@ -151,10 +264,18 @@ object FulfilmentRoutes {
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[OrderId]("orderId") / "dispatch")
-      .in(jsonBody[DispatchRequest])
-      .out(jsonBody[TaskResponse])
+      .in("fulfilment-tasks" / orderIdPath / "dispatch")
+      .in(
+        jsonBody[DispatchRequest]
+          .example(DispatchRequest("GLN-1A2B3C4D", "DHL Express"))
+      )
+      .out(jsonBody[TaskResponse].example(exampleTask))
       .errorOut(fullErrorOutput)
+      .summary("Dispatch a task")
+      .description(
+        "Moves the task PACKED → DISPATCHED, records the tracking number and carrier, and publishes `DispatchConfirmed` through the transactional outbox. Blank `trackingNo`/`carrier` → 400. 404 if no task exists; 409 from any other state. Not idempotent — a repeat is 409."
+      )
+      .tag(Tag)
 
   private val failEndpoint: PublicEndpoint[
     (OrderId, FailRequest),
@@ -163,10 +284,17 @@ object FulfilmentRoutes {
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[OrderId]("orderId") / "fail")
-      .in(jsonBody[FailRequest])
-      .out(jsonBody[TaskResponse])
+      .in("fulfilment-tasks" / orderIdPath / "fail")
+      .in(
+        jsonBody[FailRequest].example(FailRequest("carrier_unavailable"))
+      )
+      .out(jsonBody[TaskResponse].example(exampleTask))
       .errorOut(fullErrorOutput)
+      .summary("Fail a task")
+      .description(
+        "Moves the task to DISPATCH_FAILED from PENDING, PICKING or PACKED, records the reason, and publishes `DispatchFailed` through the transactional outbox. Blank `reason` → 400. 404 if no task exists; 409 from a terminal state."
+      )
+      .tag(Tag)
 
   private val simulateEndpoint: PublicEndpoint[
     (OrderId, SimulateRequest),
@@ -175,10 +303,19 @@ object FulfilmentRoutes {
     Any
   ] =
     endpoint.post
-      .in("fulfilment-tasks" / path[OrderId]("orderId") / "simulate-next")
-      .in(jsonBody[SimulateRequest])
-      .out(jsonBody[TaskResponse])
+      .in("fulfilment-tasks" / orderIdPath / "simulate-next")
+      .in(
+        jsonBody[SimulateRequest].example(
+          SimulateRequest(Some(true), Some("simulated dispatch failure"))
+        )
+      )
+      .out(jsonBody[TaskResponse].example(exampleTask))
       .errorOut(notFoundOrInvalidTransitionOutput)
+      .summary("Advance a task one step (simulation)")
+      .description(
+        "Demo-only; registered only when `fulfilment.simulation.enabled`. Advances PENDING → PICKING → PACKED → DISPATCHED, minting a `GLN-XXXXXXXX` tracking number and carrier `DHL Express`; with `forceFailure` it fails the task instead. 404 if no task exists; 409 from a terminal state."
+      )
+      .tag(Tag)
 
   private val simulatedCarrier: String = "DHL Express"
 
@@ -234,14 +371,21 @@ object FulfilmentRoutes {
     def orderContext(orderId: OrderId): Map[String, String] =
       Map("order_id" -> OrderId.render(orderId))
 
-    val startPicking = actionEndpoint("start-picking").serverLogic[F] {
-      orderId =>
-        run(orderId, orderContext(orderId))(
-          Right(FulfilmentCommand.StartPicking)
-        )
+    val startPicking = actionEndpoint(
+      "start-picking",
+      "Start picking a task",
+      "Moves the task PENDING → PICKING. No event published. 404 if no task exists; 409 from any other state (so repeating it while PICKING is a 409)."
+    ).serverLogic[F] { orderId =>
+      run(orderId, orderContext(orderId))(
+        Right(FulfilmentCommand.StartPicking)
+      )
     }
 
-    val pack = actionEndpoint("pack").serverLogic[F] { orderId =>
+    val pack = actionEndpoint(
+      "pack",
+      "Mark a task packed",
+      "Moves the task PICKING → PACKED. No event published. 404 if no task exists; 409 from any other state."
+    ).serverLogic[F] { orderId =>
       run(orderId, orderContext(orderId))(Right(FulfilmentCommand.Pack))
     }
 

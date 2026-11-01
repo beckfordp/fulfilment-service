@@ -49,10 +49,10 @@ config-gated `simulate-next`, and health/ready.
 - Client-side mirrors (order-service/notification-service DTOs).
 - Wiring gshop's admin fulfilment screen.
 
-## Appendix: proposed descriptions (PROPOSED 2026-11-01 — awaiting user approval)
+## Appendix: approved descriptions (2026-11-01)
 
-Do not apply any `.summary`/`.description`/`.tag`/`@description`/
-`@encodedExample`/`.example` to code until this appendix is approved.
+Approved by the user on 2026-11-01 exactly as proposed below. These are now
+applied to the code.
 
 ### Endpoints
 

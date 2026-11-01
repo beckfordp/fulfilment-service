@@ -15,6 +15,7 @@ import sttp.tapir.Schema.annotations.{description, encodedExample}
 
 import java.time.Instant
 
+@description("One order line as snapshotted when the task was created.")
 final case class FulfilmentItem(
     @description("Product SKU.")
     @encodedExample("SKU-0042")
@@ -36,11 +37,19 @@ object FulfilmentItem {
     Schema.derived[FulfilmentItem].copy(name = None)
 }
 
+@description(
+  "Ship-to address snapshotted from the order when the task was created."
+)
 final case class Address(
+    @description("First address line.") @encodedExample("1 High Street")
     line1: String,
+    @description("Second address line, if any.") @encodedExample("Flat 2")
     line2: Option[String],
+    @description("City or town.") @encodedExample("London")
     city: String,
+    @description("Postcode / ZIP.") @encodedExample("SW1A 1AA")
     postalCode: String,
+    @description("ISO 3166-1 alpha-2 country code.") @encodedExample("GB")
     country: String
 )
 
