@@ -113,7 +113,14 @@ object FulfilmentRoutes {
         )(e => ErrorResponse(e.message))
     )
 
-  private val errorOutput: EndpointOutput[FulfilmentFailure] =
+  private val notFoundOrInvalidTransitionOutput
+      : EndpointOutput[FulfilmentFailure] =
+    oneOf[FulfilmentFailure](notFoundVariant, invalidTransitionVariant)
+
+  private val invalidRequestOutput: EndpointOutput[FulfilmentFailure] =
+    oneOf[FulfilmentFailure](invalidRequestVariant)
+
+  private val fullErrorOutput: EndpointOutput[FulfilmentFailure] =
     oneOf[FulfilmentFailure](
       notFoundVariant,
       invalidTransitionVariant,
@@ -127,7 +134,7 @@ object FulfilmentRoutes {
       .in("fulfilment-tasks")
       .in(query[Option[String]]("state"))
       .out(jsonBody[List[TaskResponse]])
-      .errorOut(errorOutput)
+      .errorOut(invalidRequestOutput)
 
   private def actionEndpoint(
       action: String
@@ -135,7 +142,7 @@ object FulfilmentRoutes {
     endpoint.post
       .in("fulfilment-tasks" / path[OrderId]("orderId") / action)
       .out(jsonBody[TaskResponse])
-      .errorOut(errorOutput)
+      .errorOut(notFoundOrInvalidTransitionOutput)
 
   private val dispatchEndpoint: PublicEndpoint[
     (OrderId, DispatchRequest),
@@ -147,7 +154,7 @@ object FulfilmentRoutes {
       .in("fulfilment-tasks" / path[OrderId]("orderId") / "dispatch")
       .in(jsonBody[DispatchRequest])
       .out(jsonBody[TaskResponse])
-      .errorOut(errorOutput)
+      .errorOut(fullErrorOutput)
 
   private val failEndpoint: PublicEndpoint[
     (OrderId, FailRequest),
@@ -159,7 +166,7 @@ object FulfilmentRoutes {
       .in("fulfilment-tasks" / path[OrderId]("orderId") / "fail")
       .in(jsonBody[FailRequest])
       .out(jsonBody[TaskResponse])
-      .errorOut(errorOutput)
+      .errorOut(fullErrorOutput)
 
   private val simulateEndpoint: PublicEndpoint[
     (OrderId, SimulateRequest),
@@ -171,7 +178,7 @@ object FulfilmentRoutes {
       .in("fulfilment-tasks" / path[OrderId]("orderId") / "simulate-next")
       .in(jsonBody[SimulateRequest])
       .out(jsonBody[TaskResponse])
-      .errorOut(errorOutput)
+      .errorOut(notFoundOrInvalidTransitionOutput)
 
   private val simulatedCarrier: String = "DHL Express"
 
