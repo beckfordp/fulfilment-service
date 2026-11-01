@@ -1,0 +1,1 @@
+Phase 4 verification: sbt scalafmtCheckAll scalafmtSbtCheck test -> 70 passed, 0 failed (FulfilmentStorePostgresSuite exercises the SQL state filter against Testcontainers Postgres). Prompting off.
