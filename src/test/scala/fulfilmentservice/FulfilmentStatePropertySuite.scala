@@ -13,14 +13,4 @@ class FulfilmentStatePropertySuite extends ScalaCheckSuite {
       assertEquals(FulfilmentState.fromString(state.wire), Some(state))
     }
   }
-
-  property("only DISPATCHED and DISPATCH_FAILED are terminal") {
-    forAll(Gen.oneOf(FulfilmentState.values.toList)) { state =>
-      assertEquals(
-        FulfilmentState.isTerminal(state),
-        state == FulfilmentState.Dispatched ||
-          state == FulfilmentState.DispatchFailed
-      )
-    }
-  }
 }

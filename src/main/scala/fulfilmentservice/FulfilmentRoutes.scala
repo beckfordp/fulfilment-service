@@ -1,6 +1,6 @@
 package fulfilmentservice
 
-import cats.MonadThrow
+import cats.{Functor, MonadThrow}
 import cats.effect.Async
 import cats.effect.std.UUIDGen
 import cats.syntax.all._
@@ -175,7 +175,7 @@ object FulfilmentRoutes {
 
   private val simulatedCarrier: String = "DHL Express"
 
-  private def generatedTrackingNo[F[_]: UUIDGen: cats.Functor]: F[String] =
+  private def generatedTrackingNo[F[_]: Functor: UUIDGen]: F[String] =
     UUIDGen[F].randomUUID.map(id => s"GLN-${id.toString.take(8).toUpperCase}")
 
   def serverEndpoints[F[_]: MonadThrow: UUIDGen](

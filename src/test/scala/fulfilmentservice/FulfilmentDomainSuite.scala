@@ -27,14 +27,6 @@ class FulfilmentDomainSuite extends CatsEffectSuite {
     assertEquals(FulfilmentState.fromString("pending"), None)
   }
 
-  test("marks only DISPATCHED/DISPATCH_FAILED terminal") {
-    assert(!FulfilmentState.isTerminal(FulfilmentState.Pending))
-    assert(!FulfilmentState.isTerminal(FulfilmentState.Picking))
-    assert(!FulfilmentState.isTerminal(FulfilmentState.Packed))
-    assert(FulfilmentState.isTerminal(FulfilmentState.Dispatched))
-    assert(FulfilmentState.isTerminal(FulfilmentState.DispatchFailed))
-  }
-
   test("DispatchConfirmed envelope carries the full item snapshot") {
     FulfilmentEvents
       .dispatchConfirmed[cats.effect.IO](orderId, "GLN-1", List(item))

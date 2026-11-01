@@ -14,12 +14,6 @@ enum FulfilmentState(val wire: String) {
 object FulfilmentState {
   def fromString(value: String): Option[FulfilmentState] =
     values.find(_.wire == value)
-
-  def isTerminal(state: FulfilmentState): Boolean =
-    state match {
-      case Pending | Picking | Packed  => false
-      case Dispatched | DispatchFailed => true
-    }
 }
 
 /** Expected failures of the operator API, mapped to HTTP statuses at the edge.

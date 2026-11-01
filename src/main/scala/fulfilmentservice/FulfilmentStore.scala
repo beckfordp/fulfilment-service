@@ -52,7 +52,9 @@ trait FulfilmentStore[F[_]] {
 
 object FulfilmentStore {
 
-  /** Test/dev interpreter: `Ref`-backed, timestamps from `Clock[F]`. */
+  /** Test/dev interpreter: `Ref`-backed, timestamps from `Clock[F]`. The outbox
+    * append follows the task update (not atomic with it) - fine for tests.
+    */
   def inMemory[F[_]: Concurrent: Clock: UUIDGen]: F[FulfilmentStore[F]] =
     inMemoryWithOutbox[F].map(_._1)
 
