@@ -5,3 +5,6 @@
 - [x] Task: consumed event schemas — descriptions/examples copied from gluon's registry, doc-suite test first e0f9469
 - [x] Task: `scripts/verify-asyncapi-v3.sh` 7390386
 - [x] Task: Conductor - User Manual Verification 'Phase 1: AsyncAPI 3.0' (Protocol in workflow.md)
+
+## Phase: Review Fixes
+- [x] Task: Apply review suggestions 1e6c118
