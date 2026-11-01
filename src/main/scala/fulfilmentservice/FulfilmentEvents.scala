@@ -68,10 +68,21 @@ object DispatchFailedEvent {
 
 /** The event a `PaymentAuthorized` consumer reads (payment-service producer).
   */
+@description(
+  "Funds held: POST /payments/authorize succeeded. Consumed by fulfilment-service to start pick/pack."
+)
 final case class PaymentAuthorizedEvent(
+    @description("Order UUID (order-service's order id).")
+    @encodedExample("3f2b8c1e-5d4a-4e7b-9c6f-1a2b3c4d5e6f")
     orderId: String,
+    @description("Payment provider's authorization reference.")
+    @encodedExample("auth-7f3a9c")
     authId: String,
+    @description("When the hold lapses if never captured (ISO-8601 instant).")
+    @encodedExample("2026-11-07T10:15:30Z")
     expiresAt: Instant,
+    @description("When the authorization was made (ISO-8601 instant).")
+    @encodedExample("2026-10-31T10:15:30Z")
     timestamp: Instant
 )
 
