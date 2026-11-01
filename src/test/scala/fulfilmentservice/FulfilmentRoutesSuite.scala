@@ -1,5 +1,7 @@
 package fulfilmentservice
 
+import fulfilmentservice.StoreCommands._
+
 import cats.effect.IO
 import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite

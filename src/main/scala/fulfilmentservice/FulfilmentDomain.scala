@@ -1,6 +1,13 @@
 package fulfilmentservice
 
-import fulfilmentservice.domain.OrderId
+import cats.syntax.all._
+import fulfilmentservice.domain.{
+  FulfilmentCommand,
+  FulfilmentFailure,
+  FulfilmentLifecycle,
+  FulfilmentState,
+  OrderId
+}
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 import sttp.tapir.Schema
@@ -42,22 +49,6 @@ object Address {
   implicit val schema: Schema[Address] = Schema.derived
 }
 
-enum FulfilmentState(val wire: String) {
-  case Pending extends FulfilmentState("PENDING")
-  case Picking extends FulfilmentState("PICKING")
-  case Packed extends FulfilmentState("PACKED")
-  case Dispatched extends FulfilmentState("DISPATCHED")
-  case DispatchFailed extends FulfilmentState("DISPATCH_FAILED")
-}
-
-object FulfilmentState {
-  def fromString(value: String): Option[FulfilmentState] =
-    values.find(_.wire == value)
-
-  def isTerminal(state: FulfilmentState): Boolean =
-    state == Dispatched || state == DispatchFailed
-}
-
 final case class FulfilmentTask(
     orderId: OrderId,
     state: FulfilmentState,
@@ -70,10 +61,31 @@ final case class FulfilmentTask(
     updatedAt: Instant
 )
 
-sealed trait FulfilmentFailure
+object FulfilmentTask {
 
-object FulfilmentFailure {
-  case object NotFound extends FulfilmentFailure
-  final case class InvalidTransition(message: String) extends FulfilmentFailure
-  final case class InvalidRequest(message: String) extends FulfilmentFailure
+  /** Applies `command` to `task` via the pure lifecycle, stamping `now` as
+    * `updatedAt`. Shared by both store interpreters.
+    */
+  def applyCommand(
+      task: FulfilmentTask,
+      command: FulfilmentCommand,
+      now: Instant
+  ): Either[FulfilmentFailure, FulfilmentTask] =
+    FulfilmentLifecycle
+      .transition(task.state, command)
+      .leftMap(_ =>
+        FulfilmentFailure.InvalidTransition(
+          s"Cannot transition order ${OrderId.render(task.orderId)} from ${task.state.wire}"
+        )
+      )
+      .map { next =>
+        val moved = task.copy(state = next, updatedAt = now)
+        command match {
+          case FulfilmentCommand.Dispatch(trackingNo, carrier) =>
+            moved.copy(trackingNo = Some(trackingNo), carrier = Some(carrier))
+          case FulfilmentCommand.Fail(reason) =>
+            moved.copy(failureReason = Some(reason))
+          case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack => moved
+        }
+      }
 }

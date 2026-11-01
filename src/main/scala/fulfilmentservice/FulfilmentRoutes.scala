@@ -4,7 +4,13 @@ import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.all._
 import io.circe.Codec
-import fulfilmentservice.domain.OrderId
+import fulfilmentservice.domain.{
+  FulfilmentCommand,
+  FulfilmentFailure,
+  FulfilmentLifecycle,
+  FulfilmentState,
+  OrderId
+}
 import io.circe.generic.semiauto.deriveCodec
 import org.http4s.HttpRoutes
 import org.typelevel.log4cats.StructuredLogger
@@ -168,6 +174,8 @@ object FulfilmentRoutes {
       .out(jsonBody[TaskResponse])
       .errorOut(errorOutput)
 
+  private val simulatedCarrier: String = "DHL Express"
+
   private def generatedTrackingNo(): String =
     s"GLN-${UUID.randomUUID().toString.take(8).toUpperCase}"
 
@@ -209,63 +217,63 @@ object FulfilmentRoutes {
       }
     }
 
+    def run(orderId: OrderId, context: Map[String, String])(
+        command: Either[FulfilmentFailure, FulfilmentCommand]
+    ): F[Either[FulfilmentFailure, TaskResponse]] =
+      command
+        .traverse(store.transition(orderId, _))
+        .map(_.flatten)
+        .flatMap(respond(context))
+
+    def orderContext(orderId: OrderId): Map[String, String] =
+      Map("order_id" -> OrderId.render(orderId))
+
     val startPicking = actionEndpoint("start-picking").serverLogic[F] {
       orderId =>
-        store
-          .startPicking(orderId)
-          .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
+        run(orderId, orderContext(orderId))(
+          Right(FulfilmentCommand.StartPicking)
+        )
     }
 
     val pack = actionEndpoint("pack").serverLogic[F] { orderId =>
-      store
-        .pack(orderId)
-        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
+      run(orderId, orderContext(orderId))(Right(FulfilmentCommand.Pack))
     }
 
     val dispatch = dispatchEndpoint.serverLogic[F] { case (orderId, request) =>
-      store
-        .dispatch(orderId, request.trackingNo, request.carrier)
-        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
+      run(orderId, orderContext(orderId))(
+        FulfilmentCommand.dispatch(request.trackingNo, request.carrier)
+      )
     }
 
     val fail = failEndpoint.serverLogic[F] { case (orderId, request) =>
-      store
-        .fail(orderId, request.reason)
-        .flatMap(respond(Map("order_id" -> OrderId.render(orderId))))
+      run(orderId, orderContext(orderId))(
+        FulfilmentCommand.fail(request.reason)
+      )
     }
 
     val simulate = simulateEndpoint.serverLogic[F] { case (orderId, request) =>
       store.get(orderId).flatMap {
         case None       => MonadThrow[F].pure(Left(FulfilmentFailure.NotFound))
         case Some(task) =>
-          val outcome: F[Either[FulfilmentFailure, FulfilmentTask]] =
+          val command: Either[FulfilmentFailure, FulfilmentCommand] =
             if (request.forceFailure.getOrElse(false))
-              store.fail(
-                orderId,
+              FulfilmentCommand.fail(
                 request.reason.getOrElse("Simulated dispatch failure")
               )
             else
-              task.state match {
-                case FulfilmentState.Pending => store.startPicking(orderId)
-                case FulfilmentState.Picking => store.pack(orderId)
-                case FulfilmentState.Packed  =>
-                  store.dispatch(orderId, generatedTrackingNo(), "DHL Express")
-                case _ =>
-                  MonadThrow[F].pure(
-                    Left(
+              FulfilmentCommand
+                .dispatch(generatedTrackingNo(), simulatedCarrier)
+                .flatMap(dispatch =>
+                  FulfilmentLifecycle
+                    .simulatedNext(task.state, dispatch)
+                    .toRight(
                       FulfilmentFailure.InvalidTransition(
-                        s"Order $orderId is already ${task.state.wire}"
+                        s"Order ${OrderId.render(orderId)} is already ${task.state.wire}"
                       )
                     )
-                  )
-              }
-          outcome.flatMap(
-            respond(
-              Map(
-                "order_id" -> OrderId.render(orderId),
-                "simulated" -> "true"
-              )
-            )
+                )
+          run(orderId, orderContext(orderId) + ("simulated" -> "true"))(
+            command
           )
       }
     }

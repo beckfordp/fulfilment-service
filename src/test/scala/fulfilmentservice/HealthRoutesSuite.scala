@@ -1,5 +1,11 @@
 package fulfilmentservice
 
+import fulfilmentservice.domain.{
+  FulfilmentCommand,
+  FulfilmentFailure,
+  FulfilmentState
+}
+
 import cats.effect.IO
 import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
@@ -20,23 +26,9 @@ class HealthRoutesSuite extends CatsEffectSuite {
       def list(
           state: Option[FulfilmentState]
       ): IO[List[FulfilmentTask]] = IO.pure(Nil)
-      def startPicking(
-          orderId: OrderId
-      ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
-        IO.raiseError(new NotImplementedError())
-      def pack(
-          orderId: OrderId
-      ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
-        IO.raiseError(new NotImplementedError())
-      def dispatch(
+      def transition(
           orderId: OrderId,
-          trackingNo: String,
-          carrier: String
-      ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
-        IO.raiseError(new NotImplementedError())
-      def fail(
-          orderId: OrderId,
-          reason: String
+          command: FulfilmentCommand
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())
     }

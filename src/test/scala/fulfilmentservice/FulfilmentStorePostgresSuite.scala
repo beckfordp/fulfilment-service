@@ -1,5 +1,8 @@
 package fulfilmentservice
 
+import fulfilmentservice.domain.{FulfilmentFailure, FulfilmentState}
+import fulfilmentservice.StoreCommands._
+
 import cats.effect.IO
 import com.dimafeng.testcontainers.PostgreSQLContainer
 import com.dimafeng.testcontainers.munit.TestContainerForAll

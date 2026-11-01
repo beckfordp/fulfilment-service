@@ -1,5 +1,7 @@
 package fulfilmentservice
 
+import fulfilmentservice.domain.{FulfilmentState}
+
 import fulfilmentservice.domain.OrderId
 import munit.CatsEffectSuite
 

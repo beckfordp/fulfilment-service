@@ -4,7 +4,7 @@ import cats.effect.Sync
 import cats.syntax.all._
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
-import fulfilmentservice.domain.OrderId
+import fulfilmentservice.domain.{FulfilmentCommand, OrderId}
 import io.circe.syntax._
 import sttp.tapir.Schema
 import sttp.tapir.Schema.annotations.{description, encodedExample}
@@ -139,4 +139,22 @@ object FulfilmentEvents {
       DispatchFailedEvent(rendered, reason).asJson
     )
   }
+
+  /** The outbox event a successful `command` publishes, defined once for both
+    * store interpreters: `Dispatch` -> DispatchConfirmed (item snapshot),
+    * `Fail` -> DispatchFailed, picking/packing -> none.
+    */
+  def forCommand[F[_]: Sync](
+      orderId: OrderId,
+      task: FulfilmentTask,
+      command: FulfilmentCommand
+  ): F[Option[EventEnvelope]] =
+    command match {
+      case FulfilmentCommand.Dispatch(trackingNo, _) =>
+        dispatchConfirmed[F](orderId, trackingNo, task.items).map(Some(_))
+      case FulfilmentCommand.Fail(reason) =>
+        dispatchFailed[F](orderId, reason).map(Some(_))
+      case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack =>
+        Sync[F].pure(None)
+    }
 }
