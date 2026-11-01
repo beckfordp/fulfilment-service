@@ -6,9 +6,9 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1 — Pure lifecycle' (Protocol in workflow.md) — covered by suite (61 green, incl. Postgres testcontainers)
 
 ## Phase 2 — Effects and capabilities (H2, M5)
-- [ ] Write failing tests: in-memory timestamps from `Clock` (TestControl epoch); simulate-next tracking from `UUIDGen`; envelope id/time from `UUIDGen`/`Clock`; confirm failure.
-- [ ] Implement `Clock`/`UUIDGen` in store, routes, events; narrow bounds (`OrderClient.apply` → `Concurrent`).
-- [ ] Task: Conductor - User Manual Verification 'Phase 2 — Effects' (Protocol in workflow.md)
+- [x] Write failing tests: in-memory timestamps from `Clock` (TestControl epoch); simulate-next tracking from `UUIDGen`; envelope id/time from `UUIDGen`/`Clock`; confirm failure. — 5fa6468 (3 red)
+- [x] Implement `Clock`/`UUIDGen` in store, routes, events; narrow bounds (`OrderClient.apply` → `Concurrent`). — 5fa6468 (in-memory store `Concurrent`+`Clock`+`UUIDGen`; added cats-effect-testkit, tech-stack noted)
+- [x] Task: Conductor - User Manual Verification 'Phase 2 — Effects' (Protocol in workflow.md) — covered by suite (64 green)
 
 ## Phase 3 — Consumer and order lookup (M3, M4)
 - [ ] Write failing tests: `OrderClient` no-shipping-address → `NoShippingAddress`; `PaymentAuthorizedHandlerSuite` (happy path, unknown order, no address, invalid orderId, redelivery idempotent); confirm failure.
