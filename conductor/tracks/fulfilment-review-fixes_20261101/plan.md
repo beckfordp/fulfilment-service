@@ -16,5 +16,5 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 3 — Consumer' (Protocol in workflow.md) — covered by suite (70 green)
 
 ## Phase 4 — Low-severity cleanup (L1, L3)
-- [ ] SQL state filter for `list` (Postgres suite covers); tech-stack versions.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4 — Cleanup' (Protocol in workflow.md)
+- [x] SQL state filter for `list` (Postgres suite covers); tech-stack versions. — 42353d4 (refactor under existing green test, no new red)
+- [x] Task: Conductor - User Manual Verification 'Phase 4 — Cleanup' (Protocol in workflow.md) — covered by suite (70 green)
