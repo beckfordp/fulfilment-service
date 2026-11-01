@@ -11,9 +11,9 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 2 — Effects' (Protocol in workflow.md) — covered by suite (64 green)
 
 ## Phase 3 — Consumer and order lookup (M3, M4)
-- [ ] Write failing tests: `OrderClient` no-shipping-address → `NoShippingAddress`; `PaymentAuthorizedHandlerSuite` (happy path, unknown order, no address, invalid orderId, redelivery idempotent); confirm failure.
-- [ ] Implement `OrderLookup` ADT and extracted `PaymentAuthorizedConsumer.handle`.
-- [ ] Task: Conductor - User Manual Verification 'Phase 3 — Consumer' (Protocol in workflow.md)
+- [x] Write failing tests: `OrderClient` no-shipping-address → `NoShippingAddress`; `PaymentAuthorizedHandlerSuite` (happy path, unknown order, no address, invalid orderId, redelivery idempotent); confirm failure. — 58ffebd (red: compile)
+- [x] Implement `OrderLookup` ADT and extracted `PaymentAuthorizedConsumer.handle`. — 58ffebd
+- [x] Task: Conductor - User Manual Verification 'Phase 3 — Consumer' (Protocol in workflow.md) — covered by suite (70 green)
 
 ## Phase 4 — Low-severity cleanup (L1, L3)
 - [ ] SQL state filter for `list` (Postgres suite covers); tech-stack versions.
