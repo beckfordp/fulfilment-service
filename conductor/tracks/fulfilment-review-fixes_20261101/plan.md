@@ -1,9 +1,9 @@
 # Fulfilment review fixes — Implementation Plan
 
 ## Phase 1 — Pure lifecycle (H1, H3, M1, M2, L2)
-- [ ] Write failing tests: `FulfilmentLifecycleSuite` (transition table, command parsing, simulatedNext) + property "no command leaves a terminal state"; confirm failure.
-- [ ] Implement `domain/FulfilmentLifecycle` (state, failure, commands, transition, simulatedNext); single `store.transition(orderId, command)` in both interpreters; routes parse commands at the boundary; exhaustive simulate-next.
-- [ ] Task: Conductor - User Manual Verification 'Phase 1 — Pure lifecycle' (Protocol in workflow.md)
+- [x] Write failing tests: `FulfilmentLifecycleSuite` (transition table, command parsing, simulatedNext) + property "no command leaves a terminal state"; confirm failure. — 7dda4b4 (red: compile, types missing)
+- [x] Implement `domain/FulfilmentLifecycle` (state, failure, commands, transition, simulatedNext); single `store.transition(orderId, command)` in both interpreters; routes parse commands at the boundary; exhaustive simulate-next. — 7dda4b4 (also: in-memory transition timestamps via `Clock`; test-only `StoreCommands` shorthands)
+- [x] Task: Conductor - User Manual Verification 'Phase 1 — Pure lifecycle' (Protocol in workflow.md) — covered by suite (61 green, incl. Postgres testcontainers)
 
 ## Phase 2 — Effects and capabilities (H2, M5)
 - [ ] Write failing tests: in-memory timestamps from `Clock` (TestControl epoch); simulate-next tracking from `UUIDGen`; envelope id/time from `UUIDGen`/`Clock`; confirm failure.
