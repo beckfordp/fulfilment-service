@@ -26,18 +26,26 @@ class FulfilmentDocsSuite extends CatsEffectSuite {
   private def errorStatuses(endpoint: ServerEndpoint[Any, IO]): List[Int] =
     statuses(endpoint.endpoint.errorOutput).sorted
 
+  /** The same endpoint list `AppRoutes` passes to `Docs.routes` (simulation on,
+    * so `simulate-next` is included).
+    */
+  private def servedEndpoints(
+      store: FulfilmentStore[IO]
+  ): List[ServerEndpoint[Any, IO]] =
+    FulfilmentRoutes.serverEndpoints[IO](
+      store,
+      simulationEnabled = true,
+      NoOpLogger[IO]
+    ) ++ List(
+      HealthRoutes.healthServerEndpoint[IO],
+      HealthRoutes.readyServerEndpoint[IO](store)
+    )
+
   test("each endpoint documents only the errors it can return") {
     for {
       store <- FulfilmentStore.inMemory[IO]
     } yield {
-      val served = FulfilmentRoutes.serverEndpoints[IO](
-        store,
-        simulationEnabled = true,
-        NoOpLogger[IO]
-      ) ++ List(
-        HealthRoutes.healthServerEndpoint[IO],
-        HealthRoutes.readyServerEndpoint[IO](store)
-      )
+      val served = servedEndpoints(store)
       assertEquals(
         served.map(errorStatuses),
         List(
@@ -58,15 +66,8 @@ class FulfilmentDocsSuite extends CatsEffectSuite {
     for {
       store <- FulfilmentStore.inMemory[IO]
     } yield {
-      val endpoints = FulfilmentRoutes.serverEndpoints[IO](
-        store,
-        simulationEnabled = true,
-        NoOpLogger[IO]
-      ) ++ List(
-        HealthRoutes.healthServerEndpoint[IO],
-        HealthRoutes.readyServerEndpoint[IO](store)
-      )
-      val gaps = Docs.undocumented(endpoints.map(_.endpoint)).map(_.render)
+      val gaps =
+        Docs.undocumented(servedEndpoints(store).map(_.endpoint)).map(_.render)
       assertEquals(gaps, Nil)
     }
   }
