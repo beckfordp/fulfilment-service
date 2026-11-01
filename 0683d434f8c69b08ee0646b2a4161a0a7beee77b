@@ -1,0 +1,1 @@
+Phase 1 verification: sbt scalafmtCheckAll scalafmtSbtCheck test -> 61 passed, 0 failed (incl. FulfilmentStorePostgresSuite via Testcontainers). Manual verification: covered by the suite (prompting off); wire format unchanged (FulfilmentRoutesSuite untouched apart from imports).
