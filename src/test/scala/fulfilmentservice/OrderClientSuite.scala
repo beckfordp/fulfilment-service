@@ -33,21 +33,33 @@ class OrderClientSuite extends CatsEffectSuite {
       else IO.pure(Response[IO](Status.NotFound))
     }
 
-    client(app).get(orderId).map { result =>
-      assertEquals(
-        result.map(_._1),
-        Some(List(FulfilmentItem("sku-1", "Watch", 2, 1000)))
-      )
-      assertEquals(result.map(_._2.line1), Some("1 High St"))
+    client(app).get(orderId).map {
+      case OrderLookup.Found(items, address) =>
+        assertEquals(items, List(FulfilmentItem("sku-1", "Watch", 2, 1000)))
+        assertEquals(address.line1, "1 High St")
+      case other => fail(s"expected Found, got $other")
     }
   }
 
-  test("a 404 becomes None") {
+  test("an order without a shipping address is NoShippingAddress") {
+    val noAddress = body.replace(
+      """"shippingAddress":{"line1":"1 High St","line2":null,"city":"London","postalCode":"SW1A 1AA","country":"GB"}""",
+      """"shippingAddress":null"""
+    )
+    val app =
+      HttpApp[IO](_ => IO.pure(Response[IO](Status.Ok).withEntity(noAddress)))
+
+    client(app)
+      .get(orderId)
+      .map(result => assertEquals(result, OrderLookup.NoShippingAddress))
+  }
+
+  test("a 404 becomes NotFound") {
     val app = HttpApp[IO](_ => IO.pure(Response[IO](Status.NotFound)))
 
     client(app)
       .get(OrderId.fromUuid(UUID.randomUUID()))
-      .map(result => assertEquals(result, None))
+      .map(result => assertEquals(result, OrderLookup.NotFound))
   }
 
   test("a transient error raises") {

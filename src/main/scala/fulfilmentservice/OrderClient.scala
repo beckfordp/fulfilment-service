@@ -10,9 +10,20 @@ import org.http4s.client.Client
 import org.http4s.{Method, Request, Status, Uri}
 import purerest.resilience.Resilience
 
-/** Snapshot taken from order-service when a PaymentAuthorized event arrives. */
+/** What order-service says about an order, keeping "not found" apart from "has
+  * no shipping address" (scala-fp.md law 4).
+  */
+enum OrderLookup {
+  case Found(items: List[FulfilmentItem], shippingAddress: Address)
+  case NotFound
+  case NoShippingAddress
+}
+
+/** Snapshot taken from order-service when a PaymentAuthorized event arrives.
+  * Non-200/404 responses raise (transient: the consumer's DLQ retry path).
+  */
 trait OrderClient[F[_]] {
-  def get(orderId: OrderId): F[Option[(List[FulfilmentItem], Address)]]
+  def get(orderId: OrderId): F[OrderLookup]
 }
 
 object OrderClient {
@@ -56,9 +67,7 @@ object OrderClient {
       baseUri: Uri
   ): OrderClient[F] =
     new OrderClient[F] {
-      def get(
-          orderId: OrderId
-      ): F[Option[(List[FulfilmentItem], Address)]] =
+      def get(orderId: OrderId): F[OrderLookup] =
         client
           .run(
             Request[F](Method.GET, baseUri / "orders" / OrderId.render(orderId))
@@ -67,22 +76,25 @@ object OrderClient {
             response.status match {
               case Status.Ok =>
                 response.as[OrderBody].map { body =>
-                  body.shippingAddress.map { address =>
-                    (
-                      body.items.map(item =>
-                        FulfilmentItem(
-                          item.sku,
-                          item.productName,
-                          item.quantity,
-                          item.unitPriceCents
-                        )
-                      ),
-                      address
-                    )
+                  body.shippingAddress match {
+                    case None          => OrderLookup.NoShippingAddress
+                    case Some(address) =>
+                      OrderLookup.Found(
+                        body.items.map(item =>
+                          FulfilmentItem(
+                            item.sku,
+                            item.productName,
+                            item.quantity,
+                            item.unitPriceCents
+                          )
+                        ),
+                        address
+                      )
                   }
                 }
-              case Status.NotFound => Concurrent[F].pure(None)
-              case other           =>
+              case Status.NotFound =>
+                Concurrent[F].pure(OrderLookup.NotFound)
+              case other =>
                 Concurrent[F].raiseError(
                   new RuntimeException(
                     s"order-service GET /orders/$orderId returned ${other.code}"

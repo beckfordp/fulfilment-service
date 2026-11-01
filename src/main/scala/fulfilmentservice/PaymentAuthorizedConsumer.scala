@@ -1,5 +1,6 @@
 package fulfilmentservice
 
+import cats.Monad
 import cats.effect.Async
 import cats.syntax.all._
 import fs2.Stream
@@ -29,6 +30,42 @@ object PaymentAuthorizedConsumer {
       .withGroupId("fulfilment-service-payment-events")
       .withAutoOffsetReset(AutoOffsetReset.Earliest)
 
+  /** One decoded event: parse the orderId, look the order up, create the task
+    * (idempotent). Invalid ids and unusable orders are logged and dropped; an
+    * order-service error raises (DLQ retry).
+    */
+  def handle[F[_]: Monad](
+      store: FulfilmentStore[F],
+      orders: OrderClient[F],
+      logger: StructuredLogger[F]
+  )(event: PaymentAuthorizedEvent): F[Unit] =
+    OrderId.parse(event.orderId) match {
+      case Left(error) =>
+        logger.error(
+          Map("order_id" -> event.orderId, "error" -> error)
+        )("Invalid orderId in PaymentAuthorized payload")
+      case Right(orderId) =>
+        val context = Map("order_id" -> OrderId.render(orderId))
+        orders.get(orderId).flatMap {
+          case OrderLookup.NotFound =>
+            logger.warn(context)(
+              "PaymentAuthorized for an unknown order - skipping"
+            )
+          case OrderLookup.NoShippingAddress =>
+            logger.error(context)(
+              "PaymentAuthorized for an order with no shipping address - skipping"
+            )
+          case OrderLookup.Found(items, address) =>
+            store
+              .createTask(orderId, items, address)
+              .flatMap(task =>
+                logger.info(context + ("state" -> task.state.wire))(
+                  "Fulfilment task ready"
+                )
+              )
+        }
+    }
+
   def run[F[_]: Async](
       config: KafkaConfig,
       store: FulfilmentStore[F],
@@ -41,32 +78,6 @@ object PaymentAuthorizedConsumer {
       .subscribeTo(topic)
       .records
       .evalMap { committable =>
-        def handleEvent(event: PaymentAuthorizedEvent): F[Unit] =
-          OrderId.parse(event.orderId) match {
-            case Left(error) =>
-              logger.error(
-                Map("order_id" -> event.orderId, "error" -> error)
-              )("Invalid orderId in PaymentAuthorized payload")
-            case Right(orderId) =>
-              orders.get(orderId).flatMap {
-                case None =>
-                  logger.warn(
-                    Map("order_id" -> OrderId.render(orderId))
-                  )("PaymentAuthorized for an unknown order - skipping")
-                case Some((items, address)) =>
-                  store
-                    .createTask(orderId, items, address)
-                    .flatMap(task =>
-                      logger.info(
-                        Map(
-                          "order_id" -> OrderId.render(orderId),
-                          "state" -> task.state.wire
-                        )
-                      )("Fulfilment task ready")
-                    )
-              }
-          }
-
         val key = committable.record.key.getOrElse("")
 
         val handled: F[Unit] = committable.record.value match {
@@ -103,7 +114,9 @@ object PaymentAuthorizedConsumer {
                       )
                       .as(())
                   case Right(event) =>
-                    deadLetter.guard(topic, key, raw)(handleEvent(event))
+                    deadLetter.guard(topic, key, raw)(
+                      handle[F](store, orders, logger)(event)
+                    )
                 }
             }
         }
