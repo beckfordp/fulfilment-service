@@ -5,7 +5,7 @@
 - [x] Implement `domain/FulfilmentLifecycle` (state, failure, commands, transition, simulatedNext); single `store.transition(orderId, command)` in both interpreters; routes parse commands at the boundary; exhaustive simulate-next. — 7dda4b4 (also: in-memory transition timestamps via `Clock`; test-only `StoreCommands` shorthands)
 - [x] Task: Conductor - User Manual Verification 'Phase 1 — Pure lifecycle' (Protocol in workflow.md) — covered by suite (61 green, incl. Postgres testcontainers)
 
-## Phase 2 — Effects and capabilities (H2, M5)
+## Phase 2 — Effects and capabilities (H2, M5) [checkpoint: 3166e41]
 - [x] Write failing tests: in-memory timestamps from `Clock` (TestControl epoch); simulate-next tracking from `UUIDGen`; envelope id/time from `UUIDGen`/`Clock`; confirm failure. — 5fa6468 (3 red)
 - [x] Implement `Clock`/`UUIDGen` in store, routes, events; narrow bounds (`OrderClient.apply` → `Concurrent`). — 5fa6468 (in-memory store `Concurrent`+`Clock`+`UUIDGen`; added cats-effect-testkit, tech-stack noted)
 - [x] Task: Conductor - User Manual Verification 'Phase 2 — Effects' (Protocol in workflow.md) — covered by suite (64 green)
