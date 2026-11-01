@@ -46,8 +46,9 @@
 - scalafmt (Scala 3 default) — `sbt scalafmtCheck test` in CI
 
 ## Shared platform library
-- `purerestlib` 0.4.0 (`io.github.beckfordp`) — tracing, logging, metrics,
-  resilience, tapir docs.
+- `purerestlib` 0.7.3 (`io.github.beckfordp`) — tracing, logging, metrics,
+  resilience, tapir docs (`Docs.undocumented` coverage check, gluon TD-20).
+  Bumped from 0.4.0 by TD-20.5; tapir/purekafka/otel4s pins already aligned.
 
 ## Packaging / local deploy
 - sbt-native-packager; deployed to local OrbStack k8s via gluon's Helm chart
