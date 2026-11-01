@@ -1,0 +1,1 @@
+Task: Phase 4 low-severity cleanup (TD-16.3 L1/L3). Postgres list uses WHERE state = $1 (selectTasksByState) instead of reading every row and filtering in Scala; tech-stack.md purerestlib 0.1.0->0.4.0 and purekafka 0.5.0->0.6.1 (Messaging line) to match build.sbt. Covered by FulfilmentStorePostgresSuite 'list filters by state'. 70 green.
