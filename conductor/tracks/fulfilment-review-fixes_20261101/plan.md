@@ -18,3 +18,7 @@
 ## Phase 4 — Low-severity cleanup (L1, L3) [checkpoint: 2afec67]
 - [x] SQL state filter for `list` (Postgres suite covers); tech-stack versions. — 42353d4 (refactor under existing green test, no new red)
 - [x] Task: Conductor - User Manual Verification 'Phase 4 — Cleanup' (Protocol in workflow.md) — covered by suite (70 green)
+
+## Phase: Review Fixes
+
+- [x] Task: Apply review suggestions 31a73ce (dropped dead `isTerminal`; `Functor` import; in-memory outbox atomicity note)
