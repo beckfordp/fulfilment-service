@@ -30,7 +30,7 @@
 - Flyway 11.8.2; PostgreSQL 16, database `fulfilment`
 
 ## Messaging
-- fs2-kafka 3.6.0 + purekafka 0.5.0 — `PaymentAuthorizedConsumer` (null-safe,
+- fs2-kafka 3.6.0 + purekafka 0.6.1 — `PaymentAuthorizedConsumer` (null-safe,
   envelope/eventType filtered, StreamSupervisor + DeadLetter, group
   `fulfilment-service-payment-events`); transactional outbox + Debezium for
   `DispatchConfirmed`/`DispatchFailed`
@@ -46,7 +46,7 @@
 - scalafmt (Scala 3 default) — `sbt scalafmtCheck test` in CI
 
 ## Shared platform library
-- `purerestlib` 0.1.0 (`io.github.beckfordp`) — tracing, logging, metrics,
+- `purerestlib` 0.4.0 (`io.github.beckfordp`) — tracing, logging, metrics,
   resilience, tapir docs.
 
 ## Packaging / local deploy

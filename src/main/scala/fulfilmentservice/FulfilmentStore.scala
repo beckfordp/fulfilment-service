@@ -182,6 +182,15 @@ object FulfilmentStore {
         timestamptz *: timestamptz
     )
 
+  private val selectTasksByState: skunk.Query[FulfilmentState, TaskRow] =
+    sql"""
+      SELECT order_id, state, items, shipping_address, tracking_no, carrier, failure_reason, created_at, updated_at FROM "fulfilment_task" WHERE state = $stateCodec ORDER BY created_at
+    """.query(
+      uuid *: stateCodec *: jsonb[List[FulfilmentItem]] *:
+        jsonb[Address] *: text.opt *: text.opt *: text.opt *:
+        timestamptz *: timestamptz
+    )
+
   private val insertTask
       : skunk.Query[(UUID, List[FulfilmentItem], Address), TaskRow] =
     sql"""
@@ -331,13 +340,18 @@ object FulfilmentStore {
               ): F[List[FulfilmentTask]] =
                 timed("select") {
                   pool.use { session =>
-                    session
-                      .prepare(selectAllTasks)
-                      .flatMap(_.stream(skunk.Void, 64).compile.toList)
+                    state match {
+                      case None =>
+                        session
+                          .prepare(selectAllTasks)
+                          .flatMap(_.stream(skunk.Void, 64).compile.toList)
+                      case Some(filter) =>
+                        session
+                          .prepare(selectTasksByState)
+                          .flatMap(_.stream(filter, 64).compile.toList)
+                    }
                   }
-                }.map(
-                  _.map(toTask).filter(task => state.forall(_ == task.state))
-                )
+                }.map(_.map(toTask))
 
               def transition(
                   orderId: OrderId,
