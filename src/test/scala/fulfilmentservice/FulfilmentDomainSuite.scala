@@ -20,8 +20,14 @@ class FulfilmentDomainSuite extends CatsEffectSuite {
 
   test("parses every state from its wire value") {
     assertEquals(
-      List("PENDING", "PICKING", "PACKED", "DISPATCHED", "DISPATCH_FAILED")
-        .flatMap(FulfilmentState.fromString),
+      List(
+        "PENDING",
+        "PICKING",
+        "PACKED",
+        "DISPATCHED",
+        "DISPATCH_FAILED",
+        "CANCELLED"
+      ).flatMap(FulfilmentState.fromString),
       FulfilmentState.values.toList
     )
     assertEquals(FulfilmentState.fromString("pending"), None)

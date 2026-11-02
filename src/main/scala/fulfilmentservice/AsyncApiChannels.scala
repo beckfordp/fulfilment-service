@@ -8,14 +8,20 @@ import purekafka.docs.{
 }
 
 /** Kafka contracts for AsyncAPI docs (ADR 0010): consumes `PaymentAuthorized`
-  * on `payment-events`; publishes `DispatchConfirmed`/`DispatchFailed` on
-  * `fulfilment-events` via the outbox + Debezium (`Publish(Cdc)`).
+  * on `payment-events` and `OrderCancelled` on `order-events`; publishes
+  * `DispatchConfirmed`/`DispatchFailed` on `fulfilment-events` via the outbox +
+  * Debezium (`Publish(Cdc)`).
   */
 object AsyncApiChannels extends AsyncApiChannelsProvider {
   val channels: List[AsyncApiChannel[?]] = List(
     AsyncApiChannel[PaymentAuthorizedEvent](
       topic = "payment-events",
       eventType = "PaymentAuthorized",
+      direction = ChannelDirection.Subscribe
+    ),
+    AsyncApiChannel[OrderCancelledEvent](
+      topic = OrderCancelledConsumer.topic,
+      eventType = "OrderCancelled",
       direction = ChannelDirection.Subscribe
     ),
     AsyncApiChannel[DispatchConfirmedEvent](

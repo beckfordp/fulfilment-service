@@ -6,7 +6,7 @@ import org.scalacheck.Prop.forAll
 
 class FulfilmentLifecycleSuite extends ScalaCheckSuite {
 
-  import FulfilmentCommand.{Pack, StartPicking}
+  import FulfilmentCommand.{Cancel, Pack, StartPicking}
   import FulfilmentState._
 
   private def dispatch: FulfilmentCommand.Dispatch =
@@ -22,7 +22,7 @@ class FulfilmentLifecycleSuite extends ScalaCheckSuite {
     }
 
   private val commands: Gen[FulfilmentCommand] =
-    Gen.oneOf(List(StartPicking, Pack, dispatch, failCommand))
+    Gen.oneOf(List(StartPicking, Pack, Cancel, dispatch, failCommand))
 
   private val states: Gen[FulfilmentState] =
     Gen.oneOf(FulfilmentState.values.toList)
@@ -48,6 +48,15 @@ class FulfilmentLifecycleSuite extends ScalaCheckSuite {
     }
   }
 
+  test("cancel is legal from every non-terminal state") {
+    List(Pending, Picking, Packed).foreach { state =>
+      assertEquals(
+        FulfilmentLifecycle.transition(state, Cancel),
+        Right(Cancelled)
+      )
+    }
+  }
+
   test("out-of-order steps are rejected with the source state") {
     assertEquals(
       FulfilmentLifecycle.transition(Pending, Pack),
@@ -64,7 +73,7 @@ class FulfilmentLifecycleSuite extends ScalaCheckSuite {
   }
 
   property("no command leaves a terminal state") {
-    forAll(Gen.oneOf(Dispatched, DispatchFailed), commands) {
+    forAll(Gen.oneOf(Dispatched, DispatchFailed, Cancelled), commands) {
       (state, command) =>
         assertEquals(
           FulfilmentLifecycle.transition(state, command),
@@ -127,6 +136,7 @@ class FulfilmentLifecycleSuite extends ScalaCheckSuite {
       FulfilmentLifecycle.simulatedNext(DispatchFailed, dispatch),
       None
     )
+    assertEquals(FulfilmentLifecycle.simulatedNext(Cancelled, dispatch), None)
   }
 
   property("every simulated step is a legal transition") {

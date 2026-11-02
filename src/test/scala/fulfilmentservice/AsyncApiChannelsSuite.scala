@@ -19,6 +19,11 @@ class AsyncApiChannelsSuite extends FunSuite {
           ChannelDirection.Subscribe: ChannelDirection
         ),
         (
+          "order-events",
+          "OrderCancelled",
+          ChannelDirection.Subscribe: ChannelDirection
+        ),
+        (
           "fulfilment-events",
           "DispatchConfirmed",
           ChannelDirection.Publish(PublisherKind.Cdc): ChannelDirection

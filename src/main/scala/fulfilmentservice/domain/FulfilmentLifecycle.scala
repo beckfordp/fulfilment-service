@@ -9,6 +9,7 @@ enum FulfilmentState(val wire: String) {
   case Packed extends FulfilmentState("PACKED")
   case Dispatched extends FulfilmentState("DISPATCHED")
   case DispatchFailed extends FulfilmentState("DISPATCH_FAILED")
+  case Cancelled extends FulfilmentState("CANCELLED")
 }
 
 object FulfilmentState {
@@ -35,6 +36,7 @@ sealed trait FulfilmentCommand
 object FulfilmentCommand {
   case object StartPicking extends FulfilmentCommand
   case object Pack extends FulfilmentCommand
+  case object Cancel extends FulfilmentCommand
   final case class Dispatch private[domain] (
       trackingNo: String,
       carrier: String
@@ -82,11 +84,13 @@ object FulfilmentLifecycle {
       case (Picking, Pack)                       => Right(Packed)
       case (Packed, Dispatch(_, _))              => Right(Dispatched)
       case (Pending | Picking | Packed, Fail(_)) => Right(DispatchFailed)
+      case (Pending | Picking | Packed, Cancel)  => Right(Cancelled)
       case (Pending, Pack | Dispatch(_, _)) => Left(IllegalTransition(current))
       case (Picking, StartPicking | Dispatch(_, _)) =>
         Left(IllegalTransition(current))
-      case (Packed, StartPicking | Pack)    => Left(IllegalTransition(current))
-      case (Dispatched | DispatchFailed, _) => Left(IllegalTransition(current))
+      case (Packed, StartPicking | Pack) => Left(IllegalTransition(current))
+      case (Dispatched | DispatchFailed | Cancelled, _) =>
+        Left(IllegalTransition(current))
     }
 
   /** simulate-next's one step forward; `None` once terminal. */
@@ -95,9 +99,9 @@ object FulfilmentLifecycle {
       dispatch: Dispatch
   ): Option[FulfilmentCommand] =
     current match {
-      case Pending                     => Some(StartPicking)
-      case Picking                     => Some(Pack)
-      case Packed                      => Some(dispatch)
-      case Dispatched | DispatchFailed => None
+      case Pending                                 => Some(StartPicking)
+      case Picking                                 => Some(Pack)
+      case Packed                                  => Some(dispatch)
+      case Dispatched | DispatchFailed | Cancelled => None
     }
 }

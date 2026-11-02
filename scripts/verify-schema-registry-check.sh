@@ -26,7 +26,7 @@ export GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
 SERVICE="fulfilment-service"
 API="http://apicurio-registry.gluon-local.svc.cluster.local:8080/apis/registry/v3/groups/gluon/artifacts"
 PRODUCES=(fulfilment-events-DispatchConfirmed fulfilment-events-DispatchFailed)
-CONSUMES=(payment-events-PaymentAuthorized)
+CONSUMES=(payment-events-PaymentAuthorized order-events-OrderCancelled)
 FAILED=0
 
 fail() { echo "FAIL: $1" >&2; FAILED=1; }

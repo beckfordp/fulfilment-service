@@ -26,6 +26,11 @@ object StoreCommands {
         case Right(command) => store.transition(orderId, command)
       }
 
+    def cancel(
+        orderId: OrderId
+    ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+      store.transition(orderId, FulfilmentCommand.Cancel)
+
     def fail(
         orderId: OrderId,
         reason: String

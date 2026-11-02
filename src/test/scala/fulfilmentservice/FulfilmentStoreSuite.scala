@@ -88,6 +88,41 @@ class FulfilmentStoreSuite extends CatsEffectSuite {
     }
   }
 
+  test("cancel aborts a non-terminal task and emits nothing") {
+    withStore { (store, outbox) =>
+      for {
+        _ <- store.createTask(orderId, List(item), address)
+        cancelled <- store.cancel(orderId)
+        again <- store.cancel(orderId)
+        events <- outbox.get
+      } yield {
+        assertEquals(cancelled.map(_.state), Right(FulfilmentState.Cancelled))
+        assert(
+          again.left.exists(
+            _.isInstanceOf[FulfilmentFailure.InvalidTransition]
+          )
+        )
+        assertEquals(events, Nil)
+      }
+    }
+  }
+
+  test("cancel is rejected once a task dispatched") {
+    withStore { (store, _) =>
+      for {
+        _ <- store.createTask(orderId, List(item), address)
+        _ <- store.startPicking(orderId)
+        _ <- store.pack(orderId)
+        _ <- store.dispatch(orderId, "GLN-1", "DHL")
+        cancelled <- store.cancel(orderId)
+      } yield assert(
+        cancelled.left.exists(
+          _.isInstanceOf[FulfilmentFailure.InvalidTransition]
+        )
+      )
+    }
+  }
+
   test("rejects invalid and terminal transitions") {
     withStore { (store, _) =>
       for {

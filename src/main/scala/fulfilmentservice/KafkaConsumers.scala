@@ -9,9 +9,8 @@ import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.metrics.Meter
 import purekafka.consumer.{DeadLetter, StreamSupervisor}
 
-/** Wires the single `PaymentAuthorized` consumer with purekafka's supervisor
-  * and DLQ (TD-2.3/TD-2.4, ADR 0010). A future consumer gets its own supervisor
-  * and is merged in.
+/** Wires the `PaymentAuthorized` and `OrderCancelled` consumers, each with its
+  * own supervisor and DLQ (TD-2.3/TD-2.4, ADR 0010).
   */
 object KafkaConsumers {
 
@@ -27,26 +26,46 @@ object KafkaConsumers {
         .withBootstrapServers(config.bootstrapServers)
 
     for {
-      deadLetter <- Stream.resource(
+      paymentDeadLetter <- Stream.resource(
         DeadLetter.resource[F, String, String](
           config.dlqRetry,
           config.dlqPublishResilience,
           dlqProducerSettings
         )(logger)(meter)
       )
-      result <- StreamSupervisor.supervise[F, Unit](
-        config.streamSupervisor
-      )(logger)(meter)(
-        Async[F].pure(
-          PaymentAuthorizedConsumer.run[F](
-            config,
-            store,
-            orders,
-            logger,
-            deadLetter
+      orderDeadLetter <- Stream.resource(
+        DeadLetter.resource[F, String, String](
+          config.dlqRetry,
+          config.dlqPublishResilience,
+          dlqProducerSettings
+        )(logger)(meter)
+      )
+      result <- StreamSupervisor
+        .supervise[F, Unit](config.streamSupervisor)(logger)(meter)(
+          Async[F].pure(
+            PaymentAuthorizedConsumer.run[F](
+              config,
+              store,
+              orders,
+              logger,
+              paymentDeadLetter
+            )
           )
         )
-      )
+        .merge(
+          StreamSupervisor.supervise[F, Unit](config.streamSupervisor)(
+            logger
+          )(meter)(
+            Async[F].pure(
+              OrderCancelledConsumer.run[F](
+                config,
+                store,
+                logger,
+                orderDeadLetter
+              )
+            )
+          )
+        )
     } yield result
   }
 

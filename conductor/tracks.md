@@ -2,6 +2,9 @@
 
 This file tracks all major tracks for the project.
 
+- [ ] **Track: Abort non-dispatched tasks on OrderCancelled (US-9.5, Journey 5)**
+  *Link: [./tracks/order-cancelled-abort_20261102/](./tracks/order-cancelled-abort_20261102/)*
+
 ---
 
 ---

@@ -155,7 +155,8 @@ object FulfilmentEvents {
         dispatchConfirmed[F](orderId, trackingNo, task.items).map(Some(_))
       case FulfilmentCommand.Fail(reason) =>
         dispatchFailed[F](orderId, reason).map(Some(_))
-      case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack =>
+      case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack |
+          FulfilmentCommand.Cancel =>
         Monad[F].pure(None)
     }
 }

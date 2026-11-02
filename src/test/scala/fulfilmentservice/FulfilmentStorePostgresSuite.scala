@@ -136,6 +136,30 @@ class FulfilmentStorePostgresSuite
     }
   }
 
+  test("cancel persists CANCELLED and writes no fulfilment event") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        val orderId = id()
+        for {
+          _ <- store.createTask(orderId, List(item), address)
+          cancelled <- store.cancel(orderId)
+          fetched <- store.get(orderId)
+          outbox <- query(
+            postgres,
+            s"select payload->>'eventType' from outbox_events where aggregate_id = '$orderId'"
+          )
+        } yield {
+          assertEquals(
+            cancelled.map(_.state),
+            Right(FulfilmentState.Cancelled)
+          )
+          assertEquals(fetched.map(_.state), Some(FulfilmentState.Cancelled))
+          assertEquals(outbox, Nil)
+        }
+      }
+    }
+  }
+
   test("invalid transitions and unknown orders are rejected") {
     withContainers { postgres =>
       withStore(postgres) { store =>

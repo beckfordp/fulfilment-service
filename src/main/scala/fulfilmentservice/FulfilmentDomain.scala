@@ -94,7 +94,9 @@ object FulfilmentTask {
             moved.copy(trackingNo = Some(trackingNo), carrier = Some(carrier))
           case FulfilmentCommand.Fail(reason) =>
             moved.copy(failureReason = Some(reason))
-          case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack => moved
+          case FulfilmentCommand.StartPicking | FulfilmentCommand.Pack |
+              FulfilmentCommand.Cancel =>
+            moved
         }
       }
 }
