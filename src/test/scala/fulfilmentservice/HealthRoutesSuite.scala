@@ -3,7 +3,10 @@ package fulfilmentservice
 import fulfilmentservice.domain.{
   FulfilmentCommand,
   FulfilmentFailure,
-  FulfilmentState
+  FulfilmentState,
+  Reconciliation,
+  ReconciliationStatus,
+  ResolveReconciliationOutcome
 }
 
 import cats.effect.IO
@@ -37,6 +40,17 @@ class HealthRoutesSuite extends CatsEffectSuite {
       ): IO[Boolean] = IO.pure(false)
       def reconciliationReason(orderId: OrderId): IO[Option[String]] =
         IO.pure(None)
+      def listReconciliations(
+          status: Option[ReconciliationStatus],
+          orderId: Option[OrderId]
+      ): IO[List[Reconciliation]] = IO.pure(Nil)
+      def resolveReconciliation(
+          orderId: OrderId,
+          operatorId: String,
+          note: Option[String],
+          resolvedAt: java.time.Instant
+      ): IO[ResolveReconciliationOutcome] =
+        IO.pure(ResolveReconciliationOutcome.NotFound)
     }
 
   test("GET /health returns 200") {

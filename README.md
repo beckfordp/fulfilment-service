@@ -47,6 +47,13 @@ curl -X POST http://localhost:8080/fulfilment-tasks/<orderId>/simulate-next \
   -H "Content-Type: application/json" \
   -d '{"forceFailure":true,"reason":"Simulated failure"}'
 
+# Reconciliation queue (ADM-4); resolve with the dev operator token
+curl "http://localhost:8080/reconciliations?status=open"
+curl -X PATCH http://localhost:8080/reconciliations/<orderId> \
+  -H "Authorization: Bearer dev-operator-token" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"resolved","note":"checked"}'
+
 # Liveness / readiness
 curl http://localhost:8080/health
 curl http://localhost:8080/health/ready

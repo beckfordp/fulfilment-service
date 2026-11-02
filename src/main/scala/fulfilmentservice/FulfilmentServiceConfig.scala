@@ -51,6 +51,11 @@ final case class KafkaConfig(
     streamSupervisor: StreamSupervisorConfig
 ) derives ConfigReader
 
+final case class OperatorAuthConfig(
+    token: Option[String],
+    operatorId: String
+) derives ConfigReader
+
 final case class FulfilmentServiceConfig(
     port: Int,
     metricsPort: Int,
@@ -59,7 +64,8 @@ final case class FulfilmentServiceConfig(
     postgres: PostgresConfig,
     orderClient: OrderClientConfig,
     simulation: SimulationConfig,
-    kafka: KafkaConfig
+    kafka: KafkaConfig,
+    operatorAuth: OperatorAuthConfig
 ) derives ConfigReader
 
 object FulfilmentServiceConfig {

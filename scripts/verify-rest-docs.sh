@@ -91,6 +91,8 @@ allowed = {
     ("/fulfilment-tasks/{orderId}/simulate-next", "post"): {"200", "400", "404", "409"},
     ("/health", "get"): {"200"},
     ("/health/ready", "get"): {"200", "503"},
+    ("/reconciliations", "get"): {"200", "400"},
+    ("/reconciliations/{orderId}", "patch"): {"200", "400", "401", "404"},
 }
 for (path, method), statuses in allowed.items():
     op = paths.get(path, {}).get(method)
@@ -143,7 +145,8 @@ check("simulate-next documented (simulation enabled)",
       "/fulfilment-tasks/{orderId}/simulate-next" in paths)
 
 for name in ["TaskResponse", "Address", "DispatchRequest", "FailRequest",
-             "SimulateRequest", "ErrorResponse"]:
+             "SimulateRequest", "ErrorResponse", "ReconciliationResponse",
+             "ResolveReconciliationRequest"]:
     props = schemas.get(name, {}).get("properties", {})
     # A field that only references another component is described by it
     # (tapir folds a single-use field's description into the component).

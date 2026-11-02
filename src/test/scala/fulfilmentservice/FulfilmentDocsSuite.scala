@@ -37,6 +37,12 @@ class FulfilmentDocsSuite extends CatsEffectSuite {
       simulationEnabled = true,
       NoOpLogger[IO]
     ) ++ List(
+      ReconciliationRoutes.listServerEndpoint[IO](store, NoOpLogger[IO]),
+      ReconciliationRoutes.resolveServerEndpoint[IO](
+        store,
+        OperatorAuth.disabled,
+        NoOpLogger[IO]
+      ),
       HealthRoutes.healthServerEndpoint[IO],
       HealthRoutes.readyServerEndpoint[IO](store)
     )
@@ -55,6 +61,8 @@ class FulfilmentDocsSuite extends CatsEffectSuite {
           List(400, 404, 409), // dispatch (blank fields)
           List(400, 404, 409), // fail (blank reason)
           List(404, 409), // simulate-next (terminal)
+          List(400), // GET /reconciliations
+          List(400, 401, 404), // PATCH /reconciliations/{orderId}
           Nil, // GET /health
           List(503) // GET /health/ready
         )

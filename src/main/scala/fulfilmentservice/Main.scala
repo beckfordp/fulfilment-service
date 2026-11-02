@@ -37,6 +37,15 @@ object Main extends IOApp.Simple {
         )
       )("fulfilment-service starting")
     )
+    _ <- Resource.eval(
+      if (config.operatorAuth.token.exists(_.trim.nonEmpty))
+        telemetry.logger.warn(
+          Map("operator_auth" -> "enabled")
+        )(
+          "Dev operator token enabled - reconciliation resolve is local/demo only (ADR 0026)"
+        )
+      else IO.unit
+    )
     store <- FulfilmentStore.postgres[IO](config.postgres, telemetry.meter)
     httpClient <- EmberClientBuilder.default[IO].build
     orders = OrderClient.resilient[IO](
@@ -56,7 +65,8 @@ object Main extends IOApp.Simple {
       telemetry,
       config.simulation.enabled,
       AsyncApiChannels.channels,
-      config.asyncApiHtmlDir
+      config.asyncApiHtmlDir,
+      OperatorAuth.fromConfig(config.operatorAuth)
     )
     _ <- EmberServerBuilder
       .default[IO]

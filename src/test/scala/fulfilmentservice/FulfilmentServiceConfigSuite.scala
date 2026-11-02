@@ -46,6 +46,10 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
       |  }
       |  stream-supervisor { base-delay = 1s, max-delay = 30s }
       |}
+      |operator-auth {
+      |  token = "dev-operator-token"
+      |  operator-id = "dev-operator"
+      |}
       |""".stripMargin
 
   test("loads a fully-specified config") {
@@ -85,7 +89,9 @@ class FulfilmentServiceConfigSuite extends CatsEffectSuite {
               circuitBreaker = KafkaCircuitBreakerConfig(5, 30.seconds)
             ),
             streamSupervisor = StreamSupervisorConfig(1.second, 30.seconds)
-          )
+          ),
+          operatorAuth =
+            OperatorAuthConfig(Some("dev-operator-token"), "dev-operator")
         )
       )
     )

@@ -29,7 +29,8 @@ object AppRoutes {
       telemetry: Telemetry[F],
       simulationEnabled: Boolean,
       channels: List[AsyncApiChannel[?]],
-      staticAsyncApiDocsDir: String
+      staticAsyncApiDocsDir: String,
+      operatorAuth: OperatorAuth = OperatorAuth.disabled
   ): HttpRoutes[F] = {
     // Explicit, non-deprecated Files[F] - without it, fileService[F] below
     // falls back to fs2's deprecated Files.implicitForAsync conversion.
@@ -43,6 +44,15 @@ object AppRoutes {
         simulationEnabled,
         telemetry.logger
       ) ++ List(
+        ReconciliationRoutes.listServerEndpoint[F](
+          store,
+          telemetry.logger
+        ),
+        ReconciliationRoutes.resolveServerEndpoint[F](
+          store,
+          operatorAuth,
+          telemetry.logger
+        ),
         HealthRoutes.healthServerEndpoint[F],
         HealthRoutes.readyServerEndpoint[F](store)
       )

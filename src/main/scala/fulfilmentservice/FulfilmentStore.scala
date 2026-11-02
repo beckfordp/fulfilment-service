@@ -9,7 +9,10 @@ import fulfilmentservice.domain.{
   FulfilmentCommand,
   FulfilmentFailure,
   FulfilmentState,
-  OrderId
+  OrderId,
+  Reconciliation,
+  ReconciliationStatus,
+  ResolveReconciliationOutcome
 }
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
@@ -20,7 +23,7 @@ import skunk.circe.codec.all.jsonb
 import skunk.codec.all._
 import skunk.implicits._
 
-import java.time.{OffsetDateTime, ZoneOffset}
+import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import java.util.UUID
 import scala.concurrent.duration.SECONDS
 
@@ -55,6 +58,22 @@ trait FulfilmentStore[F[_]] {
   def flagReconciliation(orderId: OrderId, reason: String): F[Boolean]
 
   def reconciliationReason(orderId: OrderId): F[Option[String]]
+
+  /** The open/resolved reconciliation queue (ADM-4); newest first. */
+  def listReconciliations(
+      status: Option[ReconciliationStatus],
+      orderId: Option[OrderId]
+  ): F[List[Reconciliation]]
+
+  /** Resolves an open flag; the first resolver wins and a repeat returns the
+    * existing row untouched.
+    */
+  def resolveReconciliation(
+      orderId: OrderId,
+      operatorId: String,
+      note: Option[String],
+      resolvedAt: Instant
+  ): F[ResolveReconciliationOutcome]
 }
 
 object FulfilmentStore {
@@ -70,7 +89,7 @@ object FulfilmentStore {
     for {
       tasks <- Ref.of[F, Map[OrderId, FulfilmentTask]](Map.empty)
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
-      reconciliation <- Ref.of[F, Map[OrderId, String]](Map.empty)
+      reconciliation <- Ref.of[F, Map[OrderId, Reconciliation]](Map.empty)
     } yield {
       val store = new FulfilmentStore[F] {
         def ping: F[Boolean] = Concurrent[F].pure(true)
@@ -150,14 +169,64 @@ object FulfilmentStore {
           tasks.get.map(_.contains(orderId)).flatMap {
             case false => Concurrent[F].pure(false)
             case true  =>
-              reconciliation.modify { reasons =>
-                if (reasons.contains(orderId)) (reasons, false)
-                else (reasons + (orderId -> reason), true)
+              Clock[F].realTimeInstant.flatMap { now =>
+                reconciliation.modify { rows =>
+                  if (rows.contains(orderId)) (rows, false)
+                  else
+                    (
+                      rows + (orderId -> Reconciliation(
+                        orderId,
+                        reason,
+                        ReconciliationStatus.Open,
+                        now
+                      )),
+                      true
+                    )
+                }
               }
           }
 
         def reconciliationReason(orderId: OrderId): F[Option[String]] =
-          reconciliation.get.map(_.get(orderId))
+          reconciliation.get.map(_.get(orderId).map(_.reason))
+
+        def listReconciliations(
+            status: Option[ReconciliationStatus],
+            orderId: Option[OrderId]
+        ): F[List[Reconciliation]] =
+          reconciliation.get.map(
+            _.values
+              .filter(row => status.forall(_ == row.status))
+              .filter(row => orderId.forall(_ == row.orderId))
+              .toList
+              .sortBy(row => (row.createdAt, OrderId.render(row.orderId)))(using
+                Ordering[(Instant, String)].reverse
+              )
+          )
+
+        def resolveReconciliation(
+            orderId: OrderId,
+            operatorId: String,
+            note: Option[String],
+            resolvedAt: Instant
+        ): F[ResolveReconciliationOutcome] =
+          reconciliation.modify { rows =>
+            rows.get(orderId) match {
+              case None      => (rows, ResolveReconciliationOutcome.NotFound)
+              case Some(row) =>
+                row.resolve(operatorId, note, resolvedAt) match {
+                  case Some(resolved) =>
+                    (
+                      rows.updated(orderId, resolved),
+                      ResolveReconciliationOutcome.Resolved(resolved)
+                    )
+                  case None =>
+                    (
+                      rows,
+                      ResolveReconciliationOutcome.AlreadyResolved(row)
+                    )
+                }
+            }
+          }
       }
       (store, outbox)
     }
@@ -298,6 +367,111 @@ object FulfilmentStore {
       SELECT reason FROM fulfilment_reconciliation WHERE order_id = $uuid
     """.query(text)
 
+  private val optionalText: skunk.Codec[Option[String]] = text.opt
+
+  private val reconciliationStatusCodec: skunk.Codec[ReconciliationStatus] =
+    text.eimap(ReconciliationStatus.fromString)(_.asString)
+
+  private val reconciliationRow: skunk.Codec[
+    (
+        UUID,
+        String,
+        ReconciliationStatus,
+        OffsetDateTime,
+        Option[String],
+        Option[String],
+        Option[OffsetDateTime]
+    )
+  ] =
+    uuid *: text *: reconciliationStatusCodec *: timestamptz *: text.opt *:
+      text.opt *: timestamptz.opt
+
+  private def toReconciliation(
+      row: (
+          UUID,
+          String,
+          ReconciliationStatus,
+          OffsetDateTime,
+          Option[String],
+          Option[String],
+          Option[OffsetDateTime]
+      )
+  ): Reconciliation = {
+    val (orderId, reason, status, createdAt, operatorId, note, resolvedAt) =
+      row
+    Reconciliation(
+      OrderId.fromUuid(orderId),
+      reason,
+      status,
+      createdAt.toInstant,
+      operatorId,
+      note,
+      resolvedAt.map(_.toInstant)
+    )
+  }
+
+  private val selectReconciliations: skunk.Query[
+    (Option[String], Option[String], Option[String], Option[String]),
+    (
+        UUID,
+        String,
+        ReconciliationStatus,
+        OffsetDateTime,
+        Option[String],
+        Option[String],
+        Option[OffsetDateTime]
+    )
+  ] =
+    sql"""
+      SELECT order_id, reason, status, created_at, operator_id, note, resolved_at
+      FROM fulfilment_reconciliation
+      WHERE ($optionalText IS NULL OR status = $optionalText)
+        AND ($optionalText IS NULL OR order_id = $optionalText::uuid)
+      ORDER BY created_at DESC, order_id
+    """.query(reconciliationRow)
+
+  private val selectReconciliationByOrderId: skunk.Query[
+    UUID,
+    (
+        UUID,
+        String,
+        ReconciliationStatus,
+        OffsetDateTime,
+        Option[String],
+        Option[String],
+        Option[OffsetDateTime]
+    )
+  ] =
+    sql"""
+      SELECT order_id, reason, status, created_at, operator_id, note, resolved_at
+      FROM fulfilment_reconciliation
+      WHERE order_id = $uuid
+    """.query(reconciliationRow)
+
+  private val resolveReconciliationQuery: skunk.Query[
+    (String, Option[String], OffsetDateTime, UUID),
+    (
+        UUID,
+        String,
+        ReconciliationStatus,
+        OffsetDateTime,
+        Option[String],
+        Option[String],
+        Option[OffsetDateTime]
+    )
+  ] =
+    sql"""
+      UPDATE fulfilment_reconciliation
+      SET status = 'resolved',
+          operator_id = $text,
+          note = $optionalText,
+          resolved_at = $timestamptz
+      WHERE order_id = $uuid
+        AND status = 'open'
+      RETURNING order_id, reason, status, created_at, operator_id, note,
+                resolved_at
+    """.query(reconciliationRow)
+
   def postgres[F[_]: Async: Console: Network](
       config: PostgresConfig,
       meter: Meter[F]
@@ -317,177 +491,263 @@ object FulfilmentStore {
           .withUnit("s")
           .withExplicitBucketBoundaries(LatencyBuckets.seconds)
           .create
-          .map { histogram =>
-            def timed[A](operation: String)(fa: F[A]): F[A] =
-              for {
-                start <- Async[F].monotonic
-                result <- fa.attempt
-                end <- Async[F].monotonic
-                outcomeAttributes = result match {
-                  case Right(_)    => Nil
-                  case Left(error) =>
-                    List(Attribute("error.type", error.getClass.getName))
-                }
-                _ <- histogram.record(
-                  (end - start).toUnit(SECONDS),
-                  List(
-                    Attribute("db.system", "postgresql"),
-                    Attribute("db.operation", operation)
-                  ) ++ outcomeAttributes
-                )
-                a <- result.liftTo[F]
-              } yield a
+          .flatMap { histogram =>
+            meter
+              .counter[Long]("reconciliation.flags.recorded")
+              .withDescription(
+                "Manual-reconciliation flags actually recorded (first-wins)."
+              )
+              .create
+              .map { flagsCounter =>
+                def timed[A](operation: String)(fa: F[A]): F[A] =
+                  for {
+                    start <- Async[F].monotonic
+                    result <- fa.attempt
+                    end <- Async[F].monotonic
+                    outcomeAttributes = result match {
+                      case Right(_)    => Nil
+                      case Left(error) =>
+                        List(Attribute("error.type", error.getClass.getName))
+                    }
+                    _ <- histogram.record(
+                      (end - start).toUnit(SECONDS),
+                      List(
+                        Attribute("db.system", "postgresql"),
+                        Attribute("db.operation", operation)
+                      ) ++ outcomeAttributes
+                    )
+                    a <- result.liftTo[F]
+                  } yield a
 
-            new FulfilmentStore[F] {
-              def ping: F[Boolean] =
-                timed("ping")(pool.use(_.unique(pingQuery))).attempt
-                  .map(_.isRight)
+                new FulfilmentStore[F] {
+                  def ping: F[Boolean] =
+                    timed("ping")(pool.use(_.unique(pingQuery))).attempt
+                      .map(_.isRight)
 
-              def createTask(
-                  orderId: OrderId,
-                  items: List[FulfilmentItem],
-                  shippingAddress: Address
-              ): F[FulfilmentTask] =
-                timed("insert") {
-                  pool.use { session =>
-                    for {
-                      id = OrderId.uuid(orderId)
-                      inserted <- session
-                        .prepare(insertTask)
-                        .flatMap(_.option((id, items, shippingAddress)))
-                      task <- inserted match {
-                        case Some(row) => Async[F].pure(toTask(row))
-                        case None      =>
-                          session
-                            .prepare(selectTask)
-                            .flatMap(_.unique(id))
-                            .map(toTask)
+                  def createTask(
+                      orderId: OrderId,
+                      items: List[FulfilmentItem],
+                      shippingAddress: Address
+                  ): F[FulfilmentTask] =
+                    timed("insert") {
+                      pool.use { session =>
+                        for {
+                          id = OrderId.uuid(orderId)
+                          inserted <- session
+                            .prepare(insertTask)
+                            .flatMap(_.option((id, items, shippingAddress)))
+                          task <- inserted match {
+                            case Some(row) => Async[F].pure(toTask(row))
+                            case None      =>
+                              session
+                                .prepare(selectTask)
+                                .flatMap(_.unique(id))
+                                .map(toTask)
+                          }
+                        } yield task
                       }
-                    } yield task
-                  }
-                }
+                    }
 
-              def get(orderId: OrderId): F[Option[FulfilmentTask]] =
-                timed("select") {
-                  pool.use { session =>
-                    session
-                      .prepare(selectTask)
-                      .flatMap(_.option(OrderId.uuid(orderId)))
-                  }
-                }.map(_.map(toTask))
-
-              def flagReconciliation(
-                  orderId: OrderId,
-                  reason: String
-              ): F[Boolean] = {
-                val id = OrderId.uuid(orderId)
-                timed("flag_reconciliation") {
-                  pool.use { session =>
-                    session
-                      .prepare(insertReconciliationIfTaskExists)
-                      .flatMap(_.option((id, reason, id)))
-                      .map(_.isDefined)
-                  }
-                }
-              }
-
-              def reconciliationReason(
-                  orderId: OrderId
-              ): F[Option[String]] =
-                timed("select_reconciliation_reason") {
-                  pool.use { session =>
-                    session
-                      .prepare(selectReconciliationReason)
-                      .flatMap(_.option(OrderId.uuid(orderId)))
-                  }
-                }
-
-              def list(
-                  state: Option[FulfilmentState]
-              ): F[List[FulfilmentTask]] =
-                timed("select") {
-                  pool.use { session =>
-                    state match {
-                      case None =>
+                  def get(orderId: OrderId): F[Option[FulfilmentTask]] =
+                    timed("select") {
+                      pool.use { session =>
                         session
-                          .prepare(selectAllTasks)
-                          .flatMap(_.stream(skunk.Void, 64).compile.toList)
-                      case Some(filter) =>
+                          .prepare(selectTask)
+                          .flatMap(_.option(OrderId.uuid(orderId)))
+                      }
+                    }.map(_.map(toTask))
+
+                  def flagReconciliation(
+                      orderId: OrderId,
+                      reason: String
+                  ): F[Boolean] = {
+                    val id = OrderId.uuid(orderId)
+                    timed("flag_reconciliation") {
+                      pool.use { session =>
                         session
-                          .prepare(selectTasksByState)
-                          .flatMap(_.stream(filter, 64).compile.toList)
+                          .prepare(insertReconciliationIfTaskExists)
+                          .flatMap(_.option((id, reason, id)))
+                          .map(_.isDefined)
+                      }
+                    }.flatMap {
+                      case true =>
+                        flagsCounter
+                          .add(1L, List(Attribute("reason", reason)))
+                          .attempt
+                          .void
+                          .as(true)
+                      case false => Async[F].pure(false)
                     }
                   }
-                }.map(_.map(toTask))
 
-              def transition(
-                  orderId: OrderId,
-                  command: FulfilmentCommand
-              ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
-                val id = OrderId.uuid(orderId)
-                timed("update") {
-                  pool.use { session =>
-                    session.transaction.use { _ =>
-                      (
-                        session
-                          .prepare(selectTaskForUpdate)
-                          .flatMap(_.option(id)),
-                        Async[F].realTimeInstant
-                      ).tupled
-                        .flatMap {
-                          case (None, _) =>
-                            Async[F].pure(Left(FulfilmentFailure.NotFound))
-                          case (Some(row), now) =>
-                            FulfilmentTask.applyCommand(
-                              toTask(row),
-                              command,
-                              now
-                            ) match {
-                              case Left(error) =>
-                                Async[F].pure(Left(error))
-                              case Right(next) =>
-                                for {
-                                  updated <- session
-                                    .prepare(updateTaskState)
-                                    .flatMap(
-                                      _.unique(
-                                        (
-                                          next.state,
-                                          next.trackingNo,
-                                          next.carrier,
-                                          next.failureReason,
-                                          id
+                  def listReconciliations(
+                      status: Option[ReconciliationStatus],
+                      orderIdFilter: Option[OrderId]
+                  ): F[List[Reconciliation]] =
+                    timed("select_reconciliations") {
+                      pool.use(
+                        _.execute(selectReconciliations)(
+                          (
+                            status.map(_.asString),
+                            status.map(_.asString),
+                            orderIdFilter.map(OrderId.render),
+                            orderIdFilter.map(OrderId.render)
+                          )
+                        )
+                      )
+                    }.map(_.map(toReconciliation))
+
+                  def resolveReconciliation(
+                      orderId: OrderId,
+                      operatorId: String,
+                      note: Option[String],
+                      resolvedAt: Instant
+                  ): F[ResolveReconciliationOutcome] =
+                    timed("resolve_reconciliation") {
+                      pool.use { session =>
+                        session.transaction.use { _ =>
+                          session
+                            .prepare(resolveReconciliationQuery)
+                            .flatMap(
+                              _.option(
+                                (
+                                  operatorId,
+                                  note,
+                                  OffsetDateTime.ofInstant(
+                                    resolvedAt,
+                                    ZoneOffset.UTC
+                                  ),
+                                  OrderId.uuid(orderId)
+                                )
+                              )
+                            )
+                            .flatMap {
+                              case Some(row) =>
+                                Async[F].pure(
+                                  ResolveReconciliationOutcome.Resolved(
+                                    toReconciliation(row)
+                                  )
+                                )
+                              case None =>
+                                session
+                                  .prepare(selectReconciliationByOrderId)
+                                  .flatMap(_.option(OrderId.uuid(orderId)))
+                                  .map {
+                                    case Some(row) =>
+                                      ResolveReconciliationOutcome
+                                        .AlreadyResolved(
+                                          toReconciliation(row)
                                         )
-                                      )
-                                    )
-                                    .map(toTask)
-                                  event <- FulfilmentEvents
-                                    .forCommand[F](orderId, updated, command)
-                                  _ <- event.traverse_ { envelope =>
-                                    UUIDGen[F].randomUUID
-                                      .flatMap { outboxId =>
-                                        session
-                                          .prepare(insertOutboxEvent)
-                                          .flatMap(
-                                            _.execute(
-                                              (
-                                                outboxId,
-                                                OrderId.render(orderId),
-                                                envelope,
-                                                envelope.correlationId
-                                              )
-                                            ).void
-                                          )
-                                      }
+                                    case None =>
+                                      ResolveReconciliationOutcome.NotFound
                                   }
-                                } yield Right(updated)
                             }
                         }
+                      }
+                    }
+
+                  def reconciliationReason(
+                      orderId: OrderId
+                  ): F[Option[String]] =
+                    timed("select_reconciliation_reason") {
+                      pool.use { session =>
+                        session
+                          .prepare(selectReconciliationReason)
+                          .flatMap(_.option(OrderId.uuid(orderId)))
+                      }
+                    }
+
+                  def list(
+                      state: Option[FulfilmentState]
+                  ): F[List[FulfilmentTask]] =
+                    timed("select") {
+                      pool.use { session =>
+                        state match {
+                          case None =>
+                            session
+                              .prepare(selectAllTasks)
+                              .flatMap(_.stream(skunk.Void, 64).compile.toList)
+                          case Some(filter) =>
+                            session
+                              .prepare(selectTasksByState)
+                              .flatMap(_.stream(filter, 64).compile.toList)
+                        }
+                      }
+                    }.map(_.map(toTask))
+
+                  def transition(
+                      orderId: OrderId,
+                      command: FulfilmentCommand
+                  ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+                    val id = OrderId.uuid(orderId)
+                    timed("update") {
+                      pool.use { session =>
+                        session.transaction.use { _ =>
+                          (
+                            session
+                              .prepare(selectTaskForUpdate)
+                              .flatMap(_.option(id)),
+                            Async[F].realTimeInstant
+                          ).tupled
+                            .flatMap {
+                              case (None, _) =>
+                                Async[F].pure(Left(FulfilmentFailure.NotFound))
+                              case (Some(row), now) =>
+                                FulfilmentTask.applyCommand(
+                                  toTask(row),
+                                  command,
+                                  now
+                                ) match {
+                                  case Left(error) =>
+                                    Async[F].pure(Left(error))
+                                  case Right(next) =>
+                                    for {
+                                      updated <- session
+                                        .prepare(updateTaskState)
+                                        .flatMap(
+                                          _.unique(
+                                            (
+                                              next.state,
+                                              next.trackingNo,
+                                              next.carrier,
+                                              next.failureReason,
+                                              id
+                                            )
+                                          )
+                                        )
+                                        .map(toTask)
+                                      event <- FulfilmentEvents
+                                        .forCommand[F](
+                                          orderId,
+                                          updated,
+                                          command
+                                        )
+                                      _ <- event.traverse_ { envelope =>
+                                        UUIDGen[F].randomUUID
+                                          .flatMap { outboxId =>
+                                            session
+                                              .prepare(insertOutboxEvent)
+                                              .flatMap(
+                                                _.execute(
+                                                  (
+                                                    outboxId,
+                                                    OrderId.render(orderId),
+                                                    envelope,
+                                                    envelope.correlationId
+                                                  )
+                                                ).void
+                                              )
+                                          }
+                                      }
+                                    } yield Right(updated)
+                                }
+                            }
+                        }
+                      }
                     }
                   }
                 }
               }
-            }
           }
       }
   }
