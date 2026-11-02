@@ -187,6 +187,56 @@ class FulfilmentStoreSuite extends CatsEffectSuite {
     }
   }
 
+  test("reconciliation flags are first-wins and require a task") {
+    withStore { (store, _) =>
+      for {
+        _ <- store.createTask(orderId, List(item), address)
+        first <- store.flagReconciliation(orderId, "first")
+        second <- store.flagReconciliation(orderId, "second")
+        reason <- store.reconciliationReason(orderId)
+        unknown <- store.flagReconciliation(otherOrderId, "x")
+      } yield {
+        assert(first)
+        assert(!second)
+        assertEquals(reason, Some("first"))
+        assert(!unknown)
+      }
+    }
+  }
+
+  test("cancel racing dispatch has exactly one winner and one outbox event") {
+    withStore { (store, outbox) =>
+      for {
+        _ <- store.createTask(orderId, List(item), address)
+        _ <- store.startPicking(orderId)
+        _ <- store.pack(orderId)
+        results <- IO.both(
+          store.cancel(orderId),
+          store.dispatch(orderId, "GLN-1", "DHL")
+        )
+        events <- outbox.get
+        task <- store.get(orderId)
+      } yield {
+        assertEquals(
+          List(results._1.isRight, results._2.isRight).count(identity),
+          1
+        )
+        val dispatchWon = results._2.isRight
+        assertEquals(
+          events.count(_._2.eventType == "DispatchConfirmed"),
+          if (dispatchWon) 1 else 0
+        )
+        assertEquals(
+          task.map(_.state),
+          Some(
+            if (dispatchWon) FulfilmentState.Dispatched
+            else FulfilmentState.Cancelled
+          )
+        )
+      }
+    }
+  }
+
   test("timestamps come from Clock[F], not the wall clock") {
     TestControl.executeEmbed(
       for {

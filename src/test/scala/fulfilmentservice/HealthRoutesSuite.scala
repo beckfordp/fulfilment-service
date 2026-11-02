@@ -31,6 +31,12 @@ class HealthRoutesSuite extends CatsEffectSuite {
           command: FulfilmentCommand
       ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
         IO.raiseError(new NotImplementedError())
+      def flagReconciliation(
+          orderId: OrderId,
+          reason: String
+      ): IO[Boolean] = IO.pure(false)
+      def reconciliationReason(orderId: OrderId): IO[Option[String]] =
+        IO.pure(None)
     }
 
   test("GET /health returns 200") {

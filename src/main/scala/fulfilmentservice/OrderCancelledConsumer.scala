@@ -5,7 +5,12 @@ import cats.effect.Async
 import cats.syntax.all._
 import fs2.Stream
 import fs2.kafka._
-import fulfilmentservice.domain.{FulfilmentCommand, FulfilmentFailure, OrderId}
+import fulfilmentservice.domain.{
+  FulfilmentCommand,
+  FulfilmentFailure,
+  FulfilmentState,
+  OrderId
+}
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 import io.circe.parser.decode
@@ -79,7 +84,16 @@ object OrderCancelledConsumer {
         logger.warn(context)(
           "OrderCancelled for an unknown fulfilment task - skipping"
         )
-      case Left(FulfilmentFailure.InvalidTransition(message)) =>
+      case Left(
+            FulfilmentFailure.InvalidTransition(
+              message,
+              Some(FulfilmentState.Dispatched)
+            )
+          ) =>
+        logger.warn(context + ("detail" -> message))(
+          "OrderCancelled after dispatch - reconciliation flagged"
+        ) *> store.flagReconciliation(orderId, "cancel_after_dispatch").void
+      case Left(FulfilmentFailure.InvalidTransition(message, _)) =>
         logger.info(context + ("detail" -> message))(
           "OrderCancelled for a task that already dispatched or was cancelled - skipping"
         )

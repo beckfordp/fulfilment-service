@@ -48,6 +48,13 @@ trait FulfilmentStore[F[_]] {
       orderId: OrderId,
       command: FulfilmentCommand
   ): F[Either[FulfilmentFailure, FulfilmentTask]]
+
+  /** Records a manual-reconciliation flag (US-21.4), first-wins. False for an
+    * unknown task.
+    */
+  def flagReconciliation(orderId: OrderId, reason: String): F[Boolean]
+
+  def reconciliationReason(orderId: OrderId): F[Option[String]]
 }
 
 object FulfilmentStore {
@@ -63,6 +70,7 @@ object FulfilmentStore {
     for {
       tasks <- Ref.of[F, Map[OrderId, FulfilmentTask]](Map.empty)
       outbox <- Ref.of[F, List[(String, EventEnvelope)]](Nil)
+      reconciliation <- Ref.of[F, Map[OrderId, String]](Map.empty)
     } yield {
       val store = new FulfilmentStore[F] {
         def ping: F[Boolean] = Concurrent[F].pure(true)
@@ -134,6 +142,22 @@ object FulfilmentStore {
                 case Left(error) => Concurrent[F].pure(Left(error))
               }
           }
+
+        def flagReconciliation(
+            orderId: OrderId,
+            reason: String
+        ): F[Boolean] =
+          tasks.get.map(_.contains(orderId)).flatMap {
+            case false => Concurrent[F].pure(false)
+            case true  =>
+              reconciliation.modify { reasons =>
+                if (reasons.contains(orderId)) (reasons, false)
+                else (reasons + (orderId -> reason), true)
+              }
+          }
+
+        def reconciliationReason(orderId: OrderId): F[Option[String]] =
+          reconciliation.get.map(_.get(orderId))
       }
       (store, outbox)
     }
@@ -259,6 +283,21 @@ object FulfilmentStore {
     )
   }
 
+  private val insertReconciliationIfTaskExists
+      : skunk.Query[(UUID, String, UUID), UUID] =
+    sql"""
+      INSERT INTO fulfilment_reconciliation (order_id, reason)
+      SELECT $uuid, $text
+      WHERE EXISTS (SELECT 1 FROM "fulfilment_task" WHERE order_id = $uuid)
+      ON CONFLICT (order_id) DO NOTHING
+      RETURNING order_id
+    """.query(uuid)
+
+  private val selectReconciliationReason: skunk.Query[UUID, String] =
+    sql"""
+      SELECT reason FROM fulfilment_reconciliation WHERE order_id = $uuid
+    """.query(text)
+
   def postgres[F[_]: Async: Console: Network](
       config: PostgresConfig,
       meter: Meter[F]
@@ -336,6 +375,32 @@ object FulfilmentStore {
                       .flatMap(_.option(OrderId.uuid(orderId)))
                   }
                 }.map(_.map(toTask))
+
+              def flagReconciliation(
+                  orderId: OrderId,
+                  reason: String
+              ): F[Boolean] = {
+                val id = OrderId.uuid(orderId)
+                timed("flag_reconciliation") {
+                  pool.use { session =>
+                    session
+                      .prepare(insertReconciliationIfTaskExists)
+                      .flatMap(_.option((id, reason, id)))
+                      .map(_.isDefined)
+                  }
+                }
+              }
+
+              def reconciliationReason(
+                  orderId: OrderId
+              ): F[Option[String]] =
+                timed("select_reconciliation_reason") {
+                  pool.use { session =>
+                    session
+                      .prepare(selectReconciliationReason)
+                      .flatMap(_.option(OrderId.uuid(orderId)))
+                  }
+                }
 
               def list(
                   state: Option[FulfilmentState]

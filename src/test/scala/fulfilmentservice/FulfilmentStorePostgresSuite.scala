@@ -160,6 +160,92 @@ class FulfilmentStorePostgresSuite
     }
   }
 
+  test("cancel after dispatch is rejected with from=DISPATCHED") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        val orderId = id()
+        for {
+          _ <- store.createTask(orderId, List(item), address)
+          _ <- store.startPicking(orderId)
+          _ <- store.pack(orderId)
+          _ <- store.dispatch(orderId, "GLN-7", "DHL")
+          rejected <- store.cancel(orderId)
+          fetched <- store.get(orderId)
+        } yield {
+          assertEquals(
+            rejected,
+            Left(
+              FulfilmentFailure.InvalidTransition(
+                s"Cannot transition order ${OrderId.render(orderId)} from DISPATCHED",
+                Some(FulfilmentState.Dispatched)
+              )
+            )
+          )
+          assertEquals(fetched.map(_.state), Some(FulfilmentState.Dispatched))
+        }
+      }
+    }
+  }
+
+  test("cancel racing dispatch has exactly one winner") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        val orderId = id()
+        for {
+          _ <- store.createTask(orderId, List(item), address)
+          _ <- store.startPicking(orderId)
+          _ <- store.pack(orderId)
+          results <- IO.both(
+            store.cancel(orderId),
+            store.dispatch(orderId, "GLN-8", "DHL")
+          )
+          fetched <- store.get(orderId)
+          outbox <- query(
+            postgres,
+            s"select payload->>'eventType' from outbox_events where aggregate_id = '$orderId'"
+          )
+        } yield {
+          assertEquals(
+            List(results._1.isRight, results._2.isRight).count(identity),
+            1
+          )
+          val dispatchWon = results._2.isRight
+          assertEquals(
+            fetched.map(_.state),
+            Some(
+              if (dispatchWon) FulfilmentState.Dispatched
+              else FulfilmentState.Cancelled
+            )
+          )
+          assertEquals(
+            outbox.count(_ == "DispatchConfirmed"),
+            if (dispatchWon) 1 else 0
+          )
+        }
+      }
+    }
+  }
+
+  test("reconciliation flags are first-wins and require a task") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        val orderId = id()
+        for {
+          _ <- store.createTask(orderId, List(item), address)
+          first <- store.flagReconciliation(orderId, "first")
+          second <- store.flagReconciliation(orderId, "second")
+          reason <- store.reconciliationReason(orderId)
+          unknown <- store.flagReconciliation(id(), "x")
+        } yield {
+          assert(first)
+          assert(!second)
+          assertEquals(reason, Some("first"))
+          assert(!unknown)
+        }
+      }
+    }
+  }
+
   test("invalid transitions and unknown orders are rejected") {
     withContainers { postgres =>
       withStore(postgres) { store =>

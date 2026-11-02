@@ -107,6 +107,29 @@ class OrderCancelledHandlerSuite extends CatsEffectSuite {
     }
   }
 
+  test("OrderCancelled after dispatch flags reconciliation") {
+    val orderId = id
+    for {
+      store <- FulfilmentStore.inMemory[IO]
+      _ <- store.createTask(orderId, List(item), address)
+      _ <- store.startPicking(orderId).void *> store.pack(orderId).void *>
+        store.dispatch(orderId, "GLN-1", "DHL").void
+      dlq <- Ref.of[IO, List[(String, String, String)]](Nil)
+      dl <- deadLetter(dlq)
+      _ <- OrderCancelledConsumer.handle(store, NoOpLogger[IO], dl)(
+        OrderId.render(orderId),
+        Some(envelope(orderId))
+      )
+      task <- store.get(orderId)
+      reason <- store.reconciliationReason(orderId)
+      routed <- dlq.get
+    } yield {
+      assertEquals(task.map(_.state), Some(FulfilmentState.Dispatched))
+      assertEquals(reason, Some("cancel_after_dispatch"))
+      assertEquals(routed, Nil)
+    }
+  }
+
   test("a duplicate OrderCancelled is an idempotent no-op") {
     val orderId = id
     (for {
@@ -118,9 +141,11 @@ class OrderCancelledHandlerSuite extends CatsEffectSuite {
       _ <- handle(OrderId.render(orderId), Some(envelope(orderId)))
       _ <- handle(OrderId.render(orderId), Some(envelope(orderId)))
       task <- store.get(orderId)
+      reason <- store.reconciliationReason(orderId)
       routed <- dlq.get
     } yield {
       assertEquals(task.map(_.state), Some(FulfilmentState.Cancelled))
+      assertEquals(reason, None)
       assertEquals(routed, Nil)
     })
   }

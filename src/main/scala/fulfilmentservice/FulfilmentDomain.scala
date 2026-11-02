@@ -82,9 +82,10 @@ object FulfilmentTask {
   ): Either[FulfilmentFailure, FulfilmentTask] =
     FulfilmentLifecycle
       .transition(task.state, command)
-      .leftMap(_ =>
+      .leftMap(illegal =>
         FulfilmentFailure.InvalidTransition(
-          s"Cannot transition order ${OrderId.render(task.orderId)} from ${task.state.wire}"
+          s"Cannot transition order ${OrderId.render(task.orderId)} from ${task.state.wire}",
+          Some(illegal.from)
         )
       )
       .map { next =>

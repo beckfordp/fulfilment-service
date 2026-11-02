@@ -23,7 +23,10 @@ sealed trait FulfilmentFailure
 
 object FulfilmentFailure {
   case object NotFound extends FulfilmentFailure
-  final case class InvalidTransition(message: String) extends FulfilmentFailure
+  final case class InvalidTransition(
+      message: String,
+      from: Option[FulfilmentState] = None
+  ) extends FulfilmentFailure
   final case class InvalidRequest(message: String) extends FulfilmentFailure
 }
 
