@@ -2,9 +2,6 @@
 
 This file tracks all major tracks for the project.
 
-- [~] **Track: Checkout Journey 7 — dispatch is final (US-21.3/21.4)**
-  *Link: [./tracks/j7-dispatch-final_20261102/](./tracks/j7-dispatch-final_20261102/)*
-
 ---
 
 ---
