@@ -16,3 +16,10 @@
 
 - [x] Task: Add `order-events-OrderCancelled` to CONSUMES; `sbt schemaRegistryCheck`
 - [x] Task: Conductor - User Manual Verification 'Schema check' (Protocol in workflow.md)
+
+## Review (2026-11-02)
+
+- `sbt scalafmtCheck test` green (81 tests); `sbt schemaRegistryCheck` green.
+- Live path covered by `verify-auth-expiry.sh`: PENDING task moved to
+  CANCELLED; unit tests cover PICKING/PACKED and terminal no-ops.
+- No blocking findings.
