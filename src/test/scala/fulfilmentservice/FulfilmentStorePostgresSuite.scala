@@ -67,6 +67,39 @@ class FulfilmentStorePostgresSuite
 
   private def id(): OrderId = OrderId.fromUuid(UUID.randomUUID())
 
+  test("backlog query groups open tasks by state with the oldest time") {
+    withContainers { postgres =>
+      withStore(postgres) { store =>
+        BacklogGauges.postgresQuery[IO](configFor(postgres)).use { backlog =>
+          val a = OrderId.fromUuid(UUID.randomUUID())
+          val b = OrderId.fromUuid(UUID.randomUUID())
+          for {
+            before <- backlog
+            _ <- store.createTask(a, List(item), address)
+            _ <- store.createTask(b, List(item), address)
+            _ <- store.startPicking(b)
+            after <- backlog
+          } yield {
+            // The container is shared across tests: assert the delta.
+            def size(rows: List[BacklogState], s: FulfilmentState) =
+              rows.find(_.state == s).fold(0L)(_.size)
+            assertEquals(
+              size(after, FulfilmentState.Pending) -
+                size(before, FulfilmentState.Pending),
+              1L
+            )
+            assertEquals(
+              size(after, FulfilmentState.Picking) -
+                size(before, FulfilmentState.Picking),
+              1L
+            )
+            assert(after.forall(_.oldestEnteredAt.isDefined), after)
+          }
+        }
+      }
+    }
+  }
+
   test("createTask is idempotent and persists the snapshot") {
     withContainers { postgres =>
       withStore(postgres) { store =>

@@ -28,7 +28,11 @@ object Main extends IOApp.Simple {
       FulfilmentServiceConfig.loadValidated[IO]
     )
     _ <- Migrations.resource[IO](config.postgres)
-    telemetry <- Telemetry.resource[IO](config.serviceName, config.metricsPort)
+    telemetry <- Telemetry.resource[IO](
+      config.serviceName,
+      config.metricsPort,
+      Some(runtime.metrics)
+    )
     _ <- Resource.eval(
       telemetry.logger.info(
         Map(
@@ -46,7 +50,17 @@ object Main extends IOApp.Simple {
         )
       else IO.unit
     )
-    store <- FulfilmentStore.postgres[IO](config.postgres, telemetry.meter)
+    store <- FulfilmentStore
+      .postgres[IO](config.postgres, telemetry.meter)
+      .evalMap(
+        FulfilmentJourneyMetrics.instrument[IO](
+          _,
+          telemetry.meter,
+          telemetry.logger
+        )
+      )
+    backlog <- BacklogGauges.postgresQuery[IO](config.postgres)
+    _ <- BacklogGauges.register[IO](telemetry.meter)(backlog)
     httpClient <- EmberClientBuilder.default[IO].build
     orders = OrderClient.resilient[IO](
       httpClient,
