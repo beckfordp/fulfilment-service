@@ -8,7 +8,7 @@ import fs2.kafka._
 import io.circe.parser.decode
 import fulfilmentservice.domain.OrderId
 import org.typelevel.log4cats.StructuredLogger
-import purekafka.consumer.DeadLetter
+import purekafka.consumer.{DeadLetter, EventAge}
 
 /** Consumes `PaymentAuthorized` on `payment-events` (US-17.1): looks the order
   * up, snapshots its items + shipping address, and creates a PENDING fulfilment
@@ -20,6 +20,8 @@ object PaymentAuthorizedConsumer {
 
   val topic: String = "payment-events"
 
+  val groupId: String = "fulfilment-service-payment-events"
+
   private val eventType: String = "PaymentAuthorized"
 
   private def consumerSettings[F[_]: Async](
@@ -27,7 +29,7 @@ object PaymentAuthorizedConsumer {
   ): ConsumerSettings[F, Option[String], Option[String]] =
     ConsumerSettings[F, Option[String], Option[String]]
       .withBootstrapServers(config.bootstrapServers)
-      .withGroupId("fulfilment-service-payment-events")
+      .withGroupId(groupId)
       .withAutoOffsetReset(AutoOffsetReset.Earliest)
 
   /** One decoded event: parse the orderId, look the order up, create the task
@@ -71,12 +73,18 @@ object PaymentAuthorizedConsumer {
       store: FulfilmentStore[F],
       orders: OrderClient[F],
       logger: StructuredLogger[F],
-      deadLetter: DeadLetter[F, String, String]
+      deadLetter: DeadLetter[F, String, String],
+      eventAge: EventAge[F]
   ): Stream[F, Unit] =
     KafkaConsumer
       .stream(consumerSettings[F](config))
       .subscribeTo(topic)
       .records
+      .evalTap(committable =>
+        committable.record.timestamp.createTime.traverse_(
+          eventAge.record(topic, groupId, _)
+        )
+      )
       .evalMap { committable =>
         val key = committable.record.key.getOrElse("")
 

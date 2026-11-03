@@ -17,7 +17,7 @@ import fulfilmentservice.domain.{
 import io.circe.syntax._
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.metrics.Meter
-import purerest.metrics.LatencyBuckets
+import purerest.metrics.{LatencyBuckets, PoolMetrics}
 import skunk.Session
 import skunk.circe.codec.all.jsonb
 import skunk.codec.all._
@@ -485,6 +485,7 @@ object FulfilmentStore {
       .withUserAndPassword(config.user, config.password)
       .withDatabase(config.database)
       .pooled(max = 10)
+      .evalMap(PoolMetrics.instrument(meter, "fulfilment")(_))
       .evalMap { pool =>
         meter
           .histogram[Double]("db.client.operation.duration")

@@ -1,6 +1,7 @@
 package fulfilmentservice
 
 import cats.effect.{Async, Resource, Sync}
+import cats.effect.unsafe.metrics.IORuntimeMetrics
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.metrics.Meter
 import org.typelevel.otel4s.oteljava.context.LocalContextProvider
@@ -48,11 +49,12 @@ object Telemetry {
     */
   def resource[F[_]: Async: LocalContextProvider](
       serviceName: String,
-      metricsPort: Int
+      metricsPort: Int,
+      ioRuntimeMetrics: Option[IORuntimeMetrics] = None
   ): Resource[F, Telemetry[F]] =
     fromResources[F](
       Tracing.console[F](serviceName),
-      Metrics.oteljava[F](serviceName, metricsPort),
+      Metrics.oteljava[F](serviceName, metricsPort, ioRuntimeMetrics),
       serviceName
     )
 }

@@ -7,7 +7,7 @@ import fs2.Stream
 import fs2.kafka.ProducerSettings
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.metrics.Meter
-import purekafka.consumer.{DeadLetter, StreamSupervisor}
+import purekafka.consumer.{DeadLetter, EventAge, StreamSupervisor}
 
 /** Wires the `PaymentAuthorized` and `OrderCancelled` consumers, each with its
   * own supervisor and DLQ (TD-2.3/TD-2.4, ADR 0010).
@@ -26,6 +26,7 @@ object KafkaConsumers {
         .withBootstrapServers(config.bootstrapServers)
 
     for {
+      eventAge <- Stream.eval(EventAge.create[F](meter))
       paymentDeadLetter <- Stream.resource(
         DeadLetter.resource[F, String, String](
           config.dlqRetry,
@@ -48,7 +49,8 @@ object KafkaConsumers {
               store,
               orders,
               logger,
-              paymentDeadLetter
+              paymentDeadLetter,
+              eventAge
             )
           )
         )
@@ -61,7 +63,8 @@ object KafkaConsumers {
                 config,
                 store,
                 logger,
-                orderDeadLetter
+                orderDeadLetter,
+                eventAge
               )
             )
           )
