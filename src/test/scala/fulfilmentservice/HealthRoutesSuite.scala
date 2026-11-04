@@ -29,10 +29,10 @@ class HealthRoutesSuite extends CatsEffectSuite {
       def list(
           state: Option[FulfilmentState]
       ): IO[List[FulfilmentTask]] = IO.pure(Nil)
-      def transition(
+      def transitionFrom(
           orderId: OrderId,
           command: FulfilmentCommand
-      ): IO[Either[FulfilmentFailure, FulfilmentTask]] =
+      ): IO[Either[FulfilmentFailure, (FulfilmentTask, FulfilmentTask)]] =
         IO.raiseError(new NotImplementedError())
       def flagReconciliation(
           orderId: OrderId,

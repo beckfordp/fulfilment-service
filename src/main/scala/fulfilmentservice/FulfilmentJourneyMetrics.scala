@@ -1,6 +1,7 @@
 package fulfilmentservice
 
-import cats.effect.{Async, Clock, Resource, Sync}
+import cats.Monad
+import cats.effect.{Async, Clock, Resource}
 import cats.effect.std.Console
 import cats.syntax.all._
 import fs2.io.net.Network
@@ -40,7 +41,7 @@ object FulfilmentJourneyMetrics {
     21600.0, 43200.0, 86400.0
   )
 
-  def instrument[F[_]: Sync](
+  def instrument[F[_]: Monad](
       store: FulfilmentStore[F],
       meter: Meter[F],
       logger: StructuredLogger[F]
@@ -55,7 +56,7 @@ object FulfilmentJourneyMetrics {
         .create
     ).mapN { (created, transitions, stepDuration) =>
       new FulfilmentStore[F] {
-        export store.{createTask => _, transition => _, *}
+        export store.{createTask => _, transitionFrom => _, *}
 
         def createTask(
             orderId: OrderId,
@@ -72,39 +73,37 @@ object FulfilmentJourneyMetrics {
             }
           }
 
-        def transition(
+        // `prev` is the row the store read under its lock, so a racing
+        // transition can't mislabel `from` or the time in state.
+        def transitionFrom(
             orderId: OrderId,
             command: FulfilmentCommand
-        ): F[Either[FulfilmentFailure, FulfilmentTask]] =
-          store.get(orderId).flatMap { before =>
-            store.transition(orderId, command).flatTap {
-              case Right(after) =>
-                before.traverse_ { prev =>
-                  val attrs = List(
-                    Attribute("from", prev.state.wire),
-                    Attribute("to", after.state.wire)
-                  )
-                  val name =
-                    if (after.state == FulfilmentState.Dispatched)
-                      "order_dispatched"
-                    else s"fulfilment_${after.state.wire.toLowerCase}"
-                  transitions.inc(attrs) *>
-                    stepDuration.record(
-                      math.max(
-                        0L,
-                        after.updatedAt.toEpochMilli - prev.updatedAt.toEpochMilli
-                      ) / 1000.0,
-                      attrs
-                    ) *>
-                    Milestones.log(logger)(
-                      name,
-                      OrderId.render(orderId),
-                      None,
-                      Map("from" -> prev.state.wire)
-                    )
-                }
-              case Left(_) => Sync[F].unit
-            }
+        ): F[Either[FulfilmentFailure, (FulfilmentTask, FulfilmentTask)]] =
+          store.transitionFrom(orderId, command).flatTap {
+            case Right((prev, after)) =>
+              val attrs = List(
+                Attribute("from", prev.state.wire),
+                Attribute("to", after.state.wire)
+              )
+              val name =
+                if (after.state == FulfilmentState.Dispatched)
+                  "order_dispatched"
+                else s"fulfilment_${after.state.wire.toLowerCase}"
+              transitions.inc(attrs) *>
+                stepDuration.record(
+                  math.max(
+                    0L,
+                    after.updatedAt.toEpochMilli - prev.updatedAt.toEpochMilli
+                  ) / 1000.0,
+                  attrs
+                ) *>
+                Milestones.log(logger)(
+                  name,
+                  OrderId.render(orderId),
+                  None,
+                  Map("from" -> prev.state.wire)
+                )
+            case Left(_) => Monad[F].unit
           }
       }
     }
@@ -131,7 +130,7 @@ object BacklogGauges {
       FulfilmentState.Packed
     )
 
-  def register[F[_]: Sync](meter: Meter[F])(
+  def register[F[_]: Monad: Clock](meter: Meter[F])(
       query: F[List[BacklogState]]
   ): Resource[F, Unit] = {
     // Every open state is reported, zero when empty, so a drained backlog

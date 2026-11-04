@@ -1,5 +1,6 @@
 package fulfilmentservice
 
+import cats.Functor
 import cats.effect.{Async, Clock, Concurrent, Ref, Resource}
 import cats.effect.std.UUIDGen
 import cats.effect.std.Console
@@ -45,12 +46,13 @@ trait FulfilmentStore[F[_]] {
 
   /** Applies `command` via the pure lifecycle (`FulfilmentTask.applyCommand`)
     * atomically per task; `Dispatch`/`Fail` also write their outbox event in
-    * the same step.
+    * the same step. Returns the task as read under the lock and as updated, so
+    * telemetry sees the true `from` state (callers use `transition`).
     */
-  def transition(
+  def transitionFrom(
       orderId: OrderId,
       command: FulfilmentCommand
-  ): F[Either[FulfilmentFailure, FulfilmentTask]]
+  ): F[Either[FulfilmentFailure, (FulfilmentTask, FulfilmentTask)]]
 
   /** Records a manual-reconciliation flag (US-21.4), first-wins. False for an
     * unknown task.
@@ -77,6 +79,16 @@ trait FulfilmentStore[F[_]] {
 }
 
 object FulfilmentStore {
+
+  extension [F[_]: Functor](store: FulfilmentStore[F]) {
+
+    /** `transitionFrom`, keeping only the updated task. */
+    def transition(
+        orderId: OrderId,
+        command: FulfilmentCommand
+    ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+      store.transitionFrom(orderId, command).map(_.map(_._2))
+  }
 
   /** Test/dev interpreter: `Ref`-backed, timestamps from `Clock[F]`. The outbox
     * append follows the task update (not atomic with it) - fine for tests.
@@ -130,10 +142,10 @@ object FulfilmentStore {
               .sortBy(_.createdAt)
           )
 
-        def transition(
+        def transitionFrom(
             orderId: OrderId,
             command: FulfilmentCommand
-        ): F[Either[FulfilmentFailure, FulfilmentTask]] =
+        ): F[Either[FulfilmentFailure, (FulfilmentTask, FulfilmentTask)]] =
           Clock[F].realTimeInstant.flatMap { now =>
             tasks
               .modify { current =>
@@ -143,20 +155,24 @@ object FulfilmentStore {
                     FulfilmentTask.applyCommand(existing, command, now) match {
                       case Left(error)    => (current, Left(error))
                       case Right(updated) =>
-                        (current + (orderId -> updated), Right(updated))
+                        (
+                          current + (orderId -> updated),
+                          Right((existing, updated))
+                        )
                     }
                 }
               }
               .flatMap {
-                case Right(updated) =>
+                case Right((existing, updated)) =>
                   FulfilmentEvents
                     .forCommand[F](orderId, updated, command)
                     .flatMap {
                       case Some(envelope) =>
                         outbox
                           .update(_ :+ (OrderId.render(orderId) -> envelope))
-                          .as(Right(updated))
-                      case None => Concurrent[F].pure(Right(updated))
+                          .as(Right((existing, updated)))
+                      case None =>
+                        Concurrent[F].pure(Right((existing, updated)))
                     }
                 case Left(error) => Concurrent[F].pure(Left(error))
               }
@@ -676,10 +692,12 @@ object FulfilmentStore {
                       }
                     }.map(_.map(toTask))
 
-                  def transition(
+                  def transitionFrom(
                       orderId: OrderId,
                       command: FulfilmentCommand
-                  ): F[Either[FulfilmentFailure, FulfilmentTask]] = {
+                  ): F[
+                    Either[FulfilmentFailure, (FulfilmentTask, FulfilmentTask)]
+                  ] = {
                     val id = OrderId.uuid(orderId)
                     timed("update") {
                       pool.use { session =>
@@ -694,8 +712,9 @@ object FulfilmentStore {
                               case (None, _) =>
                                 Async[F].pure(Left(FulfilmentFailure.NotFound))
                               case (Some(row), now) =>
+                                val before = toTask(row)
                                 FulfilmentTask.applyCommand(
-                                  toTask(row),
+                                  before,
                                   command,
                                   now
                                 ) match {
@@ -740,7 +759,7 @@ object FulfilmentStore {
                                               )
                                           }
                                       }
-                                    } yield Right(updated)
+                                    } yield Right((before, updated))
                                 }
                             }
                         }
