@@ -7,6 +7,7 @@ import fs2.Stream
 import fs2.kafka.ProducerSettings
 import org.typelevel.log4cats.StructuredLogger
 import org.typelevel.otel4s.metrics.Meter
+import org.typelevel.otel4s.trace.Tracer
 import purekafka.consumer.{DeadLetter, EventAge, StreamSupervisor}
 
 /** Wires the `PaymentAuthorized` and `OrderCancelled` consumers, each with its
@@ -19,7 +20,8 @@ object KafkaConsumers {
       store: FulfilmentStore[F],
       orders: OrderClient[F],
       logger: StructuredLogger[F],
-      meter: Meter[F]
+      meter: Meter[F],
+      tracer: Tracer[F]
   ): Stream[F, Unit] = {
     def dlqProducerSettings: ProducerSettings[F, String, String] =
       ProducerSettings[F, String, String]
@@ -50,7 +52,8 @@ object KafkaConsumers {
               orders,
               logger,
               paymentDeadLetter,
-              eventAge
+              eventAge,
+              tracer
             )
           )
         )
@@ -64,7 +67,8 @@ object KafkaConsumers {
                 store,
                 logger,
                 orderDeadLetter,
-                eventAge
+                eventAge,
+                tracer
               )
             )
           )
@@ -78,13 +82,15 @@ object KafkaConsumers {
       store: FulfilmentStore[F],
       orders: OrderClient[F],
       logger: StructuredLogger[F],
-      meter: Meter[F]
+      meter: Meter[F],
+      tracer: Tracer[F]
   ): Resource[F, Unit] =
     supervised[F](
       config,
       store,
       orders,
       logger,
-      meter
+      meter,
+      tracer
     ).compile.drain.background.void
 }

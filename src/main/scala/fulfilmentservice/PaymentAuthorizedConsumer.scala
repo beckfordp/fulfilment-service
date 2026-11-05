@@ -8,7 +8,9 @@ import fs2.kafka._
 import io.circe.parser.decode
 import fulfilmentservice.domain.OrderId
 import org.typelevel.log4cats.StructuredLogger
+import org.typelevel.otel4s.trace.Tracer
 import purekafka.consumer.{DeadLetter, EventAge}
+import purekafka.tracing.KafkaTracing
 
 /** Consumes `PaymentAuthorized` on `payment-events` (US-17.1): looks the order
   * up, snapshots its items + shipping address, and creates a PENDING fulfilment
@@ -74,7 +76,8 @@ object PaymentAuthorizedConsumer {
       orders: OrderClient[F],
       logger: StructuredLogger[F],
       deadLetter: DeadLetter[F, String, String],
-      eventAge: EventAge[F]
+      eventAge: EventAge[F],
+      tracer: Tracer[F]
   ): Stream[F, Unit] =
     KafkaConsumer
       .stream(consumerSettings[F](config))
@@ -128,6 +131,10 @@ object PaymentAuthorizedConsumer {
                 }
             }
         }
-        handled *> committable.offset.commit
+        KafkaTracing.traced(tracer)(
+          committable.record.headers,
+          s"$topic process",
+          topic
+        )(handled) *> committable.offset.commit
       }
 }
