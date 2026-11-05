@@ -59,6 +59,7 @@ object Main extends IOApp.Simple {
           telemetry.logger
         )
       )
+      .map(FulfilmentStoreTracing.instrument[IO](_, telemetry.tracer))
     backlog <- BacklogGauges.postgresQuery[IO](config.postgres)
     _ <- BacklogGauges.register[IO](telemetry.meter)(backlog)
     httpClient <- EmberClientBuilder.default[IO].build
