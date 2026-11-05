@@ -4,6 +4,7 @@ import cats.effect.{IO, IOApp, Resource}
 import com.comcast.ip4s._
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
+import purerest.tracing.ClientTracing
 
 /** Acquires every dependency this service needs, delegates route assembly to
   * `AppRoutes.all`, and serves the result — a single flat `Resource`
@@ -62,7 +63,12 @@ object Main extends IOApp.Simple {
       .map(FulfilmentStoreTracing.instrument[IO](_, telemetry.tracer))
     backlog <- BacklogGauges.postgresQuery[IO](config.postgres)
     _ <- BacklogGauges.register[IO](telemetry.meter)(backlog)
-    httpClient <- EmberClientBuilder.default[IO].build
+    // Client-kind span per call; its traceparent makes the callee join this
+    // trace (PERF-5.10).
+    httpClient <- EmberClientBuilder
+      .default[IO]
+      .build
+      .map(ClientTracing.middleware[IO](telemetry.tracer))
     orders = OrderClient.resilient[IO](
       httpClient,
       config.orderClient,
