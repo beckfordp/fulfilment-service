@@ -12,7 +12,9 @@ import munit.CatsEffectSuite
 import java.util.UUID
 import org.testcontainers.utility.DockerImageName
 import org.typelevel.otel4s.metrics.Meter
+import org.typelevel.otel4s.trace.Tracer
 import purerest.metrics.{LatencyBuckets, Metrics}
+import purerest.tracing.Tracing
 
 import scala.jdk.CollectionConverters._
 
@@ -39,12 +41,15 @@ class FulfilmentStorePostgresSuite
       password = postgres.password
     )
 
-  private def withStore[A](postgres: PostgreSQLContainer)(
+  private def withStore[A](
+      postgres: PostgreSQLContainer,
+      tracer: Tracer[IO] = Tracer.noop[IO]
+  )(
       f: FulfilmentStore[IO] => IO[A]
   ): IO[A] =
     Migrations.run[IO](configFor(postgres)) *>
       FulfilmentStore
-        .postgres[IO](configFor(postgres), Meter.noop[IO])
+        .postgres[IO](configFor(postgres), Meter.noop[IO], tracer)
         .use(f)
 
   private def query(
@@ -325,7 +330,7 @@ class FulfilmentStorePostgresSuite
       Metrics.test[IO]("fulfilment-store-buckets-test").use { testMeter =>
         Migrations.run[IO](configFor(postgres)) *>
           FulfilmentStore
-            .postgres[IO](configFor(postgres), testMeter.meter)
+            .postgres[IO](configFor(postgres), testMeter.meter, Tracer.noop[IO])
             .use { store =>
               for {
                 _ <- store.ping
@@ -346,6 +351,44 @@ class FulfilmentStorePostgresSuite
                 }
               }
             }
+      }
+    }
+  }
+
+  test(
+    "PERF-5.4: DispatchConfirmed's outbox row carries the span's traceparent; outside a span, NULL"
+  ) {
+    withContainers { postgres =>
+      def dispatch(store: FulfilmentStore[IO], orderId: OrderId) =
+        store.createTask(orderId, List(item), address) *>
+          store.startPicking(orderId) *>
+          store.pack(orderId) *>
+          store.dispatch(orderId, "GLN-7", "DHL")
+      def traceParents(orderId: OrderId) =
+        query(
+          postgres,
+          s"select coalesce(trace_parent, 'NULL') from outbox_events where aggregate_id = '$orderId'"
+        )
+      Tracing.test[IO]("outbox-traceparent").use { testTracer =>
+        withStore(postgres, testTracer.tracer) { store =>
+          val inSpan = id()
+          val outside = id()
+          for {
+            traceId <- testTracer.tracer.span("dispatch").use { span =>
+              dispatch(store, inSpan).as(span.context.traceIdHex)
+            }
+            _ <- dispatch(store, outside)
+            inSpanRows <- traceParents(inSpan)
+            outsideRows <- traceParents(outside)
+          } yield {
+            assertEquals(inSpanRows.size, 1)
+            assert(
+              inSpanRows.head.matches(s"00-$traceId-[0-9a-f]{16}-[0-9a-f]{2}"),
+              s"expected 00-$traceId-<span>-<flags>, got: $inSpanRows"
+            )
+            assertEquals(outsideRows, List("NULL"))
+          }
+        }
       }
     }
   }

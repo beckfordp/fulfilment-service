@@ -51,7 +51,7 @@ object Main extends IOApp.Simple {
       else IO.unit
     )
     store <- FulfilmentStore
-      .postgres[IO](config.postgres, telemetry.meter)
+      .postgres[IO](config.postgres, telemetry.meter, telemetry.tracer)
       .evalMap(
         FulfilmentJourneyMetrics.instrument[IO](
           _,
