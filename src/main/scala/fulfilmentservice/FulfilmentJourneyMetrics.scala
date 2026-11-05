@@ -67,8 +67,7 @@ object FulfilmentJourneyMetrics {
             store.createTask(orderId, items, shippingAddress).flatTap { _ =>
               (created.inc() *> Milestones.log(logger)(
                 "fulfilment_task_created",
-                OrderId.render(orderId),
-                None
+                OrderId.render(orderId)
               )).whenA(before.isEmpty)
             }
           }
@@ -100,7 +99,6 @@ object FulfilmentJourneyMetrics {
                 Milestones.log(logger)(
                   name,
                   OrderId.render(orderId),
-                  None,
                   Map("from" -> prev.state.wire)
                 )
             case Left(_) => Monad[F].unit
