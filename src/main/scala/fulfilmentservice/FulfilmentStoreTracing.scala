@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package fulfilmentservice
 
 import cats.effect.MonadCancelThrow

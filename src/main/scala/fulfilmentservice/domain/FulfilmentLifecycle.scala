@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package fulfilmentservice.domain
 
 /** A fulfilment task's lifecycle status. `wire` is the value stored in Postgres

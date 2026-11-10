@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- US-9.5: a cancelled order aborts a task that has not dispatched.
 ALTER TABLE "fulfilment_task" DROP CONSTRAINT fulfilment_task_state_check;
 ALTER TABLE "fulfilment_task"

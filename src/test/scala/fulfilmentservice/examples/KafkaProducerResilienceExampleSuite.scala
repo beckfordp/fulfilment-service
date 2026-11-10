@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package fulfilmentservice.examples
 
 import cats.effect.{IO, Ref}

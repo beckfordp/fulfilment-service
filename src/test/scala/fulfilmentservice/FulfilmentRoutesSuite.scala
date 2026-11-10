@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package fulfilmentservice
 
 import fulfilmentservice.StoreCommands._

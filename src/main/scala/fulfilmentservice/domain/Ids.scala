@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package fulfilmentservice.domain
 
 import cats.syntax.all._

@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: MIT
+
 CREATE TABLE "fulfilment_task" (
     order_id UUID PRIMARY KEY,
     state TEXT NOT NULL CHECK (state IN ('PENDING', 'PICKING', 'PACKED', 'DISPATCHED', 'DISPATCH_FAILED')),

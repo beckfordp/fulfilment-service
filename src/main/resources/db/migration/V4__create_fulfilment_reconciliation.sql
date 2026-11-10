@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: MIT
 -- US-21.4: a cancellation that lost to dispatch (DISPATCHED is final).
 create table fulfilment_reconciliation (
     order_id uuid primary key

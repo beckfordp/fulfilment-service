@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
 # Live verification for track fulfilment-core_20261028 (US-17.1-17.3, 18.1).
 # Real flow: authorize an order -> fulfilment task PENDING -> simulate to
 # DISPATCHED + one DispatchConfirmed on fulfilment-events; a second order is
