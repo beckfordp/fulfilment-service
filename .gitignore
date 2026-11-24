@@ -33,3 +33,6 @@ metals.sbt
 
 # Structure101
 *.hsw
+
+# Claude Code local state
+.claude/
